@@ -9,6 +9,7 @@
         UseLayoutRounding="True">
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FFE05252" />
 
         <!-- Turns red when the current search matches nothing. -->
@@ -31,6 +32,17 @@
             <DockPanel>
                 <Button Content="Open folder…" Command="{Binding OpenFolderCommand}" Margin="0,0,16,0"
                         ToolTip="Load a folder of exported configurations into all three panes" />
+
+                <!-- Only shown when a loaded configuration actually carries translations. -->
+                <TextBlock DockPanel.Dock="Left" Text="Labels" VerticalAlignment="Center"
+                           Margin="0,0,6,0" Foreground="{StaticResource FgMutedBrush}"
+                           Visibility="{Binding HasLabels, Converter={StaticResource BoolToVis}}" />
+                <ComboBox DockPanel.Dock="Left" ItemsSource="{Binding Languages}"
+                          SelectedItem="{Binding SelectedLanguage, Mode=TwoWay}"
+                          VerticalAlignment="Center" Margin="0,0,16,0" MinWidth="80"
+                          MaxDropDownHeight="420"
+                          Visibility="{Binding HasLabels, Converter={StaticResource BoolToVis}}"
+                          ToolTip="Language used to resolve @GER_LABEL references" />
 
                 <CheckBox DockPanel.Dock="Left" Content="Exact match"
                           IsChecked="{Binding ExactMatch, Mode=TwoWay}"

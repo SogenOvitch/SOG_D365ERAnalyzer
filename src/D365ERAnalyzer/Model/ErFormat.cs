@@ -30,6 +30,24 @@ public sealed class ErFormatComponent
     public string? Multiplicity { get; init; }
     public string? Transformation { get; init; }
 
+    // ---- Excel and container components ----
+    // Excel components are not named the way XML ones are: a cell is identified by its range,
+    // a sheet by its sheet name, and 255 of the 315 cells in the samples carry no @Name at all.
+
+    /// <summary>Cell or range address, e.g. "A1" or "B12:C14".</summary>
+    public string? ExcelRange { get; init; }
+
+    public string? ExcelSheetName { get; init; }
+    public string? ReplicationDirection { get; init; }
+
+    /// <summary>Delimiter of a Sequence component.</summary>
+    public string? Delimiter { get; init; }
+
+    public string? MaximalLength { get; init; }
+
+    /// <summary>Data type of a DataItem component.</summary>
+    public string? DataType { get; init; }
+
     public List<ErFormatComponent> Children { get; } = new();
 }
 

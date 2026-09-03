@@ -34,7 +34,8 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
             {
                 Display = mapping.Name,
                 Detail  = TextUtil.Join(mapping.RootDescriptor,
-                                        mapping.ModelVersion is null ? null : $"v{mapping.ModelVersion}"),
+                                        mapping.ModelVersion is null ? null : $"v{mapping.ModelVersion}",
+                                        mapping.IsImport ? "import" : null),
                 Payload = mapping
             };
     }
@@ -67,11 +68,12 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
             // The triple a format matches on to pick this line out of the several in the file.
             Detail = TextUtil.Join(
                          mapping.RootDescriptor is null ? null : $"root: {mapping.RootDescriptor}",
-                         mapping.ModelVersion is null ? null : $"model version: {mapping.ModelVersion}"),
+                         mapping.ModelVersion is null ? null : $"model version: {mapping.ModelVersion}",
+                         mapping.DirectionName),
             Path   = mapping.Name
         };
         foreach (var source in mapping.Datasources)
-            sourceRoot.Children.Add(DatasourceNode(source, _sourcesByPath));
+            sourceRoot.Children.Add(DatasourceNode(source, _sourcesByPath, Labels));
         sourceRoot.IsExpanded = true;
         sources.Nodes.Add(sourceRoot);
 
@@ -86,7 +88,8 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
     /// <summary>Shared with the format pane — both mappings serialize data sources identically.</summary>
     internal static TreeNodeViewModel DatasourceNode(
         ErDatasourceNode source,
-        Dictionary<string, TreeNodeViewModel>? index = null)
+        Dictionary<string, TreeNodeViewModel>? index = null,
+        LabelContext? labels = null)
     {
         var node = new TreeNodeViewModel
         {
@@ -97,7 +100,9 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
             Expression      = source.Expression,
             Payload         = source,
             ReferencedPaths = source.ReferencedPaths,
-            Tooltip    = TextUtil.Join(source.FullPath, source.Help, source.Expression)
+            Tooltip    = TextUtil.Join(source.FullPath,
+                                       labels?.Display(source.Help) ?? source.Help,
+                                       source.Expression)
         };
 
         index?.TryAdd(source.FullPath, node);
@@ -109,7 +114,7 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
                 node.Children.Add(child);
 
         foreach (var child in source.Children)
-            node.Children.Add(DatasourceNode(child, index));
+            node.Children.Add(DatasourceNode(child, index, labels));
 
         return node;
     }
@@ -335,28 +340,65 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
     {
         var reference = new ModelBindingReference(modelGuid, revision, rootDescriptor, "", "");
 
-        var option = Options.FirstOrDefault(
-            o => o.Payload is ErMappingDefinition m && MatchesLine(m, reference));
+        var best = Options
+            .Select(o => new { Option = o, Mapping = o.Payload as ErMappingDefinition })
+            .Where(x => x.Mapping is not null && MatchesLine(x.Mapping, reference))
+            .OrderByDescending(x => DeclaresRoot(x.Mapping!, reference) ? 1 : 0)
+            .ThenByDescending(x => x.Mapping!.ModelVersion == revision ? 1 : 0)
+            .ThenByDescending(x => x.Mapping!.IsImport ? 0 : 1)
+            .FirstOrDefault();
 
-        if (option is null) return null;
+        // A line naming no root descriptor agrees on the model alone, which is far too weak to call
+        // "the line this format uses" — better to say nothing than to point somewhere wrong.
+        if (best is null || !DeclaresRoot(best.Mapping!, reference)) return null;
 
-        if (!ReferenceEquals(option, SelectedOption)) SelectedOption = option;
-        return option.Display;
+        if (!ReferenceEquals(best.Option, SelectedOption)) SelectedOption = best.Option;
+        return best.Option.Display;
     }
 
+    /// <summary>Explains why no line could be chosen, for the status bar.</summary>
+    public string DescribeMissingLine(string? modelGuid, string? revision, string? rootDescriptor)
+    {
+        var lines = Options.Select(o => o.Payload).OfType<ErMappingDefinition>().ToList();
+        if (lines.Count == 0) return "the file holds no mapping lines";
+
+        var sameModel = lines.Count(m =>
+            Guid.TryParse(m.ModelGuid, out var a) && Guid.TryParse(modelGuid, out var b) && a == b);
+
+        if (sameModel == 0) return "no line targets that model";
+
+        var versions = string.Join("/", lines.Select(m => m.ModelVersion).Distinct());
+        var rootless = lines.Count(m => m.RootDescriptor is null);
+
+        return rootless == lines.Count
+            ? $"{sameModel} line(s) target the model but none declares a root descriptor; " +
+              $"the format wants {rootDescriptor} v{revision}, the lines are v{versions}"
+            : $"no line declares root {rootDescriptor}; the lines are v{versions}";
+    }
+
+    /// <summary>
+    /// Whether a mapping line can serve a reference.
+    /// <para>
+    /// The model GUID must agree, and the root descriptor too when the line declares one. The
+    /// version deliberately need not: a format built against model v40 runs against a v76 mapping,
+    /// and demanding equality would reject every pairing that has since moved on. Version agreement
+    /// is used to rank candidates instead.
+    /// </para>
+    /// </summary>
     private static bool MatchesLine(ErMappingDefinition mapping, ModelBindingReference reference)
     {
         // GUID casing differs between the format and the mapping, so compare parsed values.
         if (Guid.TryParse(mapping.ModelGuid, out var a) && Guid.TryParse(reference.ModelGuid, out var b) && a != b)
             return false;
 
-        if (reference.ModelRevision is not null && mapping.ModelVersion is not null &&
-            !mapping.ModelVersion.Equals(reference.ModelRevision, StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (reference.RootDescriptor is null || mapping.RootDescriptor is null)
+            return true;
 
-        return reference.RootDescriptor is null ||
-               string.Equals(mapping.RootDescriptor, reference.RootDescriptor, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(mapping.RootDescriptor, reference.RootDescriptor, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool DeclaresRoot(ErMappingDefinition mapping, ModelBindingReference reference) =>
+        reference.RootDescriptor is not null && mapping.RootDescriptor is not null;
 
     /// <summary>
     /// Walks the binding tree along a model path. Not every path is bound at its full depth — a

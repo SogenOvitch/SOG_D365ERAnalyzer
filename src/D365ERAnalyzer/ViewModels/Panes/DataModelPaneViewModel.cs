@@ -60,14 +60,14 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
         };
 
         foreach (var descriptor in model.Roots)
-            root.Children.Add(RootNode(model, descriptor));
+            root.Children.Add(RootNode(model, descriptor, Labels));
 
         root.IsExpanded = true;
         section.Nodes.Add(root);
         return new[] { section };
     }
 
-    private static TreeNodeViewModel RootNode(ErDataModel model, ErDescriptor descriptor)
+    private static TreeNodeViewModel RootNode(ErDataModel model, ErDescriptor descriptor, LabelContext labels)
     {
         var chain = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { descriptor.Name };
 
@@ -75,20 +75,21 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
         {
             Header  = descriptor.Name,
             Badge   = descriptor.IsEnum ? "enum" : "record",
-            Detail  = TextUtil.Join(descriptor.Label, descriptor.Description),
+            Detail  = TextUtil.Join(labels.Display(descriptor.Label), labels.Display(descriptor.Description)),
             Path    = descriptor.Name,
-            Tooltip = TextUtil.Join(descriptor.Description, $"{descriptor.Items.Count} fields")
+            Tooltip = TextUtil.Join(labels.Display(descriptor.Description), $"{descriptor.Items.Count} fields")
         };
 
         if (descriptor.Items.Count > 0)
             node.SetLazyChildren(() => descriptor.Items.Select(
-                item => ItemNode(model, item, chain, descriptor.Name)));
+                item => ItemNode(model, item, chain, descriptor.Name, labels)));
 
         return node;
     }
 
     private static TreeNodeViewModel ItemNode(
-        ErDataModel model, ErDescriptorItem item, IReadOnlyCollection<string> chain, string parentPath)
+        ErDataModel model, ErDescriptorItem item, IReadOnlyCollection<string> chain, string parentPath,
+        LabelContext labels)
     {
         var target = model.Find(item.TypeDescriptor);
 
@@ -108,16 +109,17 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
             Detail  = TextUtil.Join(
                           item.TypeDescriptor,
                           cyclic ? "↻ recursive — already open above" : null,
-                          item.Label),
+                          labels.Display(item.Label)),
             Path    = path,
-            Tooltip = TextUtil.Join(item.Description, item.Label, item.TypeDescriptor)
+            Tooltip = TextUtil.Join(labels.Display(item.Description),
+                                    labels.Display(item.Label), item.TypeDescriptor)
         };
 
         if (target is not null && !cyclic && target.Items.Count > 0)
         {
             var branch = new HashSet<string>(chain, StringComparer.OrdinalIgnoreCase) { target.Name };
             node.SetLazyChildren(() => target.Items.Select(
-                child => ItemNode(model, child, branch, path)));
+                child => ItemNode(model, child, branch, path, labels)));
         }
 
         return node;

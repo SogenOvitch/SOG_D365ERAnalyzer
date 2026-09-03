@@ -23,10 +23,33 @@ public static class ErConfigurationReader
         return new ErConfiguration
         {
             Envelope     = envelope,
+            Labels       = ReadLabels(root),
             DataModel    = envelope.Kind == ErConfigKind.DataModel    ? ReadDataModel(root)    : null,
             ModelMapping = envelope.Kind == ErConfigKind.ModelMapping ? ReadModelMapping(root) : null,
             Format       = envelope.Kind == ErConfigKind.Format       ? ReadFormat(root)       : null
         };
+    }
+
+    /// <summary>
+    /// Reads the embedded label translations. They sit in their own section rather than beside the
+    /// things they name, and an export may carry none at all.
+    /// </summary>
+    private static ErLabels ReadLabels(XElement root)
+    {
+        var labels = new ErLabels();
+
+        foreach (var element in root.Descendants("ERLabel"))
+        {
+            var id = element.Attribute("LabelId")?.Value;
+            var language = element.Attribute("LanguageId")?.Value;
+            var value = element.Attribute("LabelValue")?.Value;
+
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(language) || value is null) continue;
+
+            labels.Add(id, language, value);
+        }
+
+        return labels;
     }
 
     // ---------------------------------------------------------------- data model
@@ -106,7 +129,8 @@ public static class ErConfigurationReader
                 ModelGuid      = element.Attribute("Model")?.Value,
                 ModelName      = element.Attribute("ModelName")?.Value,
                 ModelVersion   = VersionOf(element.Attribute("ModelVersion")?.Value),
-                RootDescriptor = element.Attribute("DataContainerDescriptor")?.Value
+                RootDescriptor = element.Attribute("DataContainerDescriptor")?.Value,
+                Direction      = element.Attribute("Direction")?.Value
             };
 
             definition.Datasources.AddRange(
@@ -209,7 +233,14 @@ public static class ErConfigurationReader
             DateFormat     = element.Attribute("DateFormat")?.Value,
             Encoding       = element.Attribute("Encoding")?.Value,
             Multiplicity   = element.Attribute("Multiplicity")?.Value,
-            Transformation = element.Attribute("Transformation")?.Value
+            Transformation = element.Attribute("Transformation")?.Value,
+
+            ExcelRange           = element.Attribute("ExcelRange")?.Value,
+            ExcelSheetName       = element.Attribute("ExcelSheetName")?.Value,
+            ReplicationDirection = element.Attribute("ReplicationDirection")?.Value,
+            Delimiter            = element.Attribute("Delimiter")?.Value,
+            MaximalLength        = element.Attribute("MaximalLength")?.Value,
+            DataType             = element.Attribute("Type")?.Value
         };
 
         foreach (var child in Contents(element).Elements())
@@ -383,6 +414,7 @@ public static class ErConfigurationReader
             "ERObjectDataSourceHandler"         => ("Object",      A("ClassName"),                  null),
             "EREnumDataSourceHandler"           => ("Enum",        A("EnumName"),                   null),
             "ERUserParameterDataSourceHandler"  => ("Parameter",   A("ExtendedDataTypeName"),       null),
+            "EREnumParameterDataSourceHandler"  => ("Enum parameter", A("EnumName") ?? A("ModelEnumName"), null),
             "EREmptyContainerDataSourceHandler" => ("Container",   null,                            null),
             "ERModelExpressionItem"             => ("Calculated",  null,                            A("ExpressionAsString")),
             "ERModelGroupByFunction"            => ("Group by",    A("ListToGroup"),                null),

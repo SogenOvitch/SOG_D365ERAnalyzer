@@ -26,8 +26,25 @@ public sealed class ErMappingDefinition
     /// <summary>Version number pulled off <c>@ModelVersion</c> ("{guid},7" → "7").</summary>
     public string? ModelVersion { get; init; }
 
-    /// <summary>The model root descriptor this line maps (<c>@DataContainerDescriptor</c>).</summary>
+    /// <summary>
+    /// The model root descriptor this line maps (<c>@DataContainerDescriptor</c>).
+    /// <para>
+    /// Absent on some lines — every mapping in the payment sample omits it — so it cannot be relied
+    /// on as a key, only as a discriminator when it is present.
+    /// </para>
+    /// </summary>
     public string? RootDescriptor { get; init; }
+
+    /// <summary>
+    /// Raw <c>@Direction</c>. Absent on export mappings and set to 1 on import ones, which in the
+    /// samples are exactly the lines named "Import mapping for ...".
+    /// </summary>
+    public string? Direction { get; init; }
+
+    /// <summary>True when this line feeds the model rather than a destination.</summary>
+    public bool IsImport => Direction == "1";
+
+    public string DirectionName => IsImport ? "import" : "export";
 
     public List<ErDatasourceNode> Datasources { get; } = new();
     public List<ErModelBinding> Bindings { get; } = new();

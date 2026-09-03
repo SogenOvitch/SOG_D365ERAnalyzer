@@ -87,7 +87,7 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
 
             foreach (var source in mapping.Datasources)
                 mappingNode.Children.Add(
-                    ModelMappingPaneViewModel.DatasourceNode(source, _sourcesByPath));
+                    ModelMappingPaneViewModel.DatasourceNode(source, _sourcesByPath, Labels));
 
             mappingNode.IsExpanded = true;
             mappingSection.Nodes.Add(mappingNode);
@@ -109,7 +109,7 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
         var enabled  = bindings.FirstOrDefault(b => b.IsEnabledBinding);
         var disabled = enabled?.IsDisabling ?? false;
 
-        var name = component.Name ?? component.Value ?? component.Kind;
+        var name = CaptionFor(component, value);
         var path = parentPath.Length == 0 ? name : $"{parentPath}/{name}";
 
         var node = new TreeNodeViewModel
@@ -119,6 +119,12 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
             Detail = TextUtil.Join(
                          // The literal @Value on an attribute, when nothing is bound to it.
                          value is null && component.Name is not null ? Quote(component.Value) : null,
+                         // A named cell still wants its address shown.
+                         component.Name is not null ? component.ExcelRange : null,
+                         component.ReplicationDirection is null ? null
+                             : $"replicate {component.ReplicationDirection}",
+                         component.Delimiter is null ? null : $"delimiter {Quote(component.Delimiter)}",
+                         component.DataType,
                          TextUtil.OneLine(value?.Expression),
                          component.DateFormat,
                          disabled          ? "disabled"
@@ -128,7 +134,7 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
             Expression      = value?.Expression,
             Condition       = enabled?.Expression,
             Payload         = component,
-            ReferencedPaths = value?.ReferencedPaths ?? (IReadOnlyList<string>)Array.Empty<string>(),
+            ReferencedPaths = ReferencedBy(bindings),
             Tooltip    = TextUtil.Join(
                              component.Id?.ToString(),
                              value?.Expression,
@@ -142,18 +148,68 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
         return node;
     }
 
+    /// <summary>
+    /// Every data source path this component reads, across all of its property bindings.
+    /// <para>
+    /// The value binding is the obvious one, but an Enabled condition reads model fields just as
+    /// really — a component emitted only when two currency codes differ depends on both of them.
+    /// Counting only the value binding left those dependencies invisible to the dots and to the
+    /// trace menus.
+    /// </para>
+    /// <para>
+    /// The value binding comes first so that the trace submenu still leads with what the component
+    /// emits, rather than with the condition that gates it.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<string> ReferencedBy(IEnumerable<ErComponentBinding> bindings) =>
+        bindings
+            .OrderByDescending(b => b.IsValueBinding)
+            .SelectMany(b => b.ReferencedPaths)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// What to show as the row caption. XML components carry a @Name, Excel ones mostly do not:
+    /// a cell is identified by its range and a sheet by its sheet name, so without this every
+    /// unnamed cell would read simply "ExcelCell".
+    /// </summary>
+    private static string CaptionFor(ErFormatComponent component, ErComponentBinding? value) =>
+        component.Name
+        ?? component.ExcelSheetName
+        ?? component.ExcelRange
+        ?? component.Value
+        // Many components carry no name at all and are identified purely by what they emit, so
+        // fall back to the bound formula rather than repeating the kind twice across the row.
+        ?? TextUtil.OneLine(value?.Expression, 80)
+        ?? BadgeFor(component.Kind);
+
     private static string? Quote(string? value) =>
         string.IsNullOrEmpty(value) ? null : $"\"{TextUtil.OneLine(value, 60)}\"";
 
     private static string BadgeFor(string kind) => kind switch
     {
-        "XMLElement"      => "element",
-        "XMLAttribute"    => "attribute",
-        "String"          => "string",
-        "Date"            => "date",
-        "FileComponent"   => "file",
-        "Base64Component" => "base64",
-        _                 => kind
+        "XMLElement"         => "element",
+        "XMLAttribute"       => "attribute",
+        "String"             => "string",
+        "Date"               => "date",
+        "FileComponent"      => "file",
+        "Base64Component"    => "base64",
+
+        // Excel output components.
+        "ExcelFileComponent" => "workbook",
+        "ExcelSheet"         => "sheet",
+        "ExcelRange"         => "range",
+        "ExcelCell"          => "cell",
+        "ExcelHeader"        => "header",
+        "ExcelFooter"        => "footer",
+
+        // Containers a format uses regardless of output kind. A folder component lets one format
+        // emit several files at once — the payment sample writes XML and a workbook together.
+        "FolderComponent"    => "folder",
+        "Sequence"           => "sequence",
+        "DataItem"           => "data item",
+
+        _                    => kind
     };
 
     private static int CountComponents(ErFormatComponent? component) =>

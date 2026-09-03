@@ -83,7 +83,6 @@ in **[docs/er-xml-schema.md](docs/er-xml-schema.md)**. Worth reading before chan
 ```
 D365ERAnalyzer.sln
 docs/er-xml-schema.md          the XML format, reverse-engineered from real exports
-samples/                       exported configurations used during development
 src/D365ERAnalyzer/
   Model/                       domain types: descriptors, mappings, bindings, format components
   Parsing/                     XML readers, expression path extraction, the model search index
@@ -97,6 +96,9 @@ src/D365ERAnalyzer/
 
 Roughly 3 900 lines of C# and 1 000 of XAML. WPF on `net8.0-windows`, MVVM, no third-party
 dependencies.
+
+No sample configurations are committed: real exports carry customer data. Point the tool at your
+own exports, one data model, one model mapping and one format per folder.
 
 ### Notes for anyone changing the parser
 
@@ -114,7 +116,8 @@ dependencies.
 
 ## Status
 
-Working tool, developed against one real trio of configurations. Several details of the file format
+Working tool, developed against several real configuration sets — XML and Excel output formats,
+derived and base configurations. Several details of the file format
 are decoded empirically rather than from documentation and are marked as unverified in the schema
 notes — notably the `@SelectionField` value for a *min* aggregation, which occurs exactly once in
 the samples with no name to corroborate it.

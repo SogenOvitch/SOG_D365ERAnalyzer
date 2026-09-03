@@ -27,6 +27,7 @@ public sealed class MainViewModel : ObservableObject
 
         foreach (var pane in new ConfigPaneViewModel[] { ModelPane, MappingPane, FormatPane })
         {
+            pane.Labels = Labels;
             pane.NodeSelected   += OnNodeSelected;
             pane.SectionsRebuilt += OnSectionsRebuilt;
         }
@@ -37,6 +38,32 @@ public sealed class MainViewModel : ObservableObject
     public FormatPaneViewModel FormatPane { get; }
 
     public RelayCommand OpenFolderCommand { get; }
+
+    /// <summary>Label translations pooled from every loaded configuration.</summary>
+    public LabelContext Labels { get; } = new();
+
+    public ObservableCollection<string> Languages { get; } = new();
+
+    public bool HasLabels => Labels.HasLabels;
+
+    /// <summary>
+    /// Display language for label references. Changing it rebuilds the trees, since captions are
+    /// resolved as the rows are built.
+    /// </summary>
+    public string? SelectedLanguage
+    {
+        get => Labels.Language;
+        set
+        {
+            if (Labels.Language == value) return;
+
+            Labels.Language = value;
+            OnPropertyChanged();
+
+            foreach (var pane in new ConfigPaneViewModel[] { ModelPane, MappingPane, FormatPane })
+                pane.RebuildTree();
+        }
+    }
 
     /// <summary>Forward direction: format row → the model mapping bindings behind it.</summary>
     public ObservableCollection<ContextAction> TraceTargets { get; } = new();
@@ -142,6 +169,8 @@ public sealed class MainViewModel : ObservableObject
             loaded++;
         }
 
+        CollectLabels();
+
         var note = AutoSelectMappingLine();
 
         Status = skipped == 0
@@ -149,6 +178,54 @@ public sealed class MainViewModel : ObservableObject
             : $"Loaded {loaded} configuration(s) from {folder}; skipped {skipped} unrecognised file(s).{note}";
 
         RunSearch();
+    }
+
+    /// <summary>
+    /// Pools the translations from every loaded configuration and picks a starting language.
+    /// <para>
+    /// Labels are not necessarily shipped with the thing they name — a model can reference ids
+    /// whose translations arrive with the mapping — so all loaded files contribute.
+    /// </para>
+    /// </summary>
+    private void CollectLabels()
+    {
+        Labels.Clear();
+
+        foreach (var pane in new ConfigPaneViewModel[] { ModelPane, MappingPane, FormatPane })
+            if (pane.Configuration is { } configuration)
+                Labels.Add(configuration.Labels);
+
+        Languages.Clear();
+        foreach (var language in Labels.Languages) Languages.Add(language);
+
+        OnPropertyChanged(nameof(HasLabels));
+
+        if (Languages.Count == 0)
+        {
+            Labels.Language = null;
+            OnPropertyChanged(nameof(SelectedLanguage));
+            return;
+        }
+
+        // Prefer the machine language, then English, then whatever is there.
+        var preferred = System.Globalization.CultureInfo.CurrentUICulture.Name;
+        var chosen = Pick(preferred) ?? Pick("en-us") ?? Pick("en") ?? Languages[0];
+
+        Labels.Language = chosen;
+        OnPropertyChanged(nameof(SelectedLanguage));
+
+        string? Pick(string wanted)
+        {
+            var exact = Languages.FirstOrDefault(l => l.Equals(wanted, StringComparison.OrdinalIgnoreCase));
+            if (exact is not null) return exact;
+
+            var dash = wanted.IndexOf('-');
+            var root = dash > 0 ? wanted[..dash] : wanted;
+
+            return Languages.FirstOrDefault(
+                l => l.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+                     l.StartsWith(root + "-", StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     /// <summary>
@@ -167,9 +244,12 @@ public sealed class MainViewModel : ObservableObject
         var line = MappingPane.SelectMappingLine(
             source.ModelGuid, source.ModelRevision, source.ModelDescriptor);
 
-        return line is null
-            ? $"  No mapping line matches the format ({source.ModelDescriptor} v{source.ModelRevision})."
-            : $"  Mapping line set to “{line}” to match the format.";
+        if (line is not null) return $"  Mapping line set to “{line}” to match the format.";
+
+        var why = MappingPane.DescribeMissingLine(
+            source.ModelGuid, source.ModelRevision, source.ModelDescriptor);
+
+        return $"  No mapping line matches the format: {why}.";
     }
 
     private ConfigPaneViewModel? PaneFor(ErConfigKind kind) => kind switch

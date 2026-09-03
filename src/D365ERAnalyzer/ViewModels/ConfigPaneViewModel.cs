@@ -32,6 +32,9 @@ public abstract class ConfigPaneViewModel : ObservableObject
     public ErConfigKind ExpectedKind { get; }
     public string Title { get; }
 
+    /// <summary>Shared label translations, assigned by the shell before a file is loaded.</summary>
+    public LabelContext Labels { get; set; } = new();
+
     public ObservableCollection<PaneOption> Options { get; } = new();
 
     public RelayCommand OpenCommand { get; }
@@ -218,6 +221,12 @@ public abstract class ConfigPaneViewModel : ObservableObject
     /// highlight, while selecting one of the highlighted sources must leave it alone.
     /// </summary>
     protected virtual void OnSelectionChanged(TreeSectionViewModel section, TreeNodeViewModel node) { }
+
+    /// <summary>Rebuilds the trees, e.g. after the display language changes.</summary>
+    public void RebuildTree()
+    {
+        if (_configuration is not null) Rebuild();
+    }
 
     private void Rebuild()
     {
