@@ -1,0 +1,203 @@
+<UserControl x:Class="D365ERAnalyzer.Views.TreeSectionView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="clr-namespace:D365ERAnalyzer.Converters"
+             xmlns:vm="clr-namespace:D365ERAnalyzer.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             d:DataContext="{d:DesignInstance Type=vm:TreeSectionViewModel}"
+             mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <conv:EmptyToVisibilityConverter x:Key="EmptyToVis" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+
+        <!-- The eye needs its own template. The shared Button template swaps the background on
+             hover, which would repaint the lit state grey and make "on" indistinguishable from
+             "merely hovered". -->
+        <SolidColorBrush x:Key="EyeActiveBrush" Color="#FF0E639C" />
+        <SolidColorBrush x:Key="EyeActiveHoverBrush" Color="#FF1B86C8" />
+
+        <Style x:Key="EyeButton" TargetType="{x:Type Button}">
+            <Setter Property="FontFamily" Value="Segoe UI Emoji" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource FgBrush}" />
+            <Setter Property="Padding" Value="6,1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="b" CornerRadius="3" BorderThickness="1"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                Background="{StaticResource ControlBrush}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background"
+                                        Value="{StaticResource ControlHoverBrush}" />
+                            </Trigger>
+                            <!-- Ordered after the hover trigger so the lit state wins. -->
+                            <DataTrigger Binding="{Binding IsFiltered}" Value="True">
+                                <Setter TargetName="b" Property="Background"
+                                        Value="{StaticResource EyeActiveBrush}" />
+                            </DataTrigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsFiltered}" Value="True" />
+                                    <Condition Binding="{Binding IsMouseOver,
+                                                                 RelativeSource={RelativeSource Self}}"
+                                               Value="True" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter TargetName="b" Property="Background"
+                                        Value="{StaticResource EyeActiveHoverBrush}" />
+                            </MultiDataTrigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Each ContextAction supplies its own caption and command. -->
+        <Style x:Key="ContextActionItem" TargetType="{x:Type MenuItem}"
+               BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="{Binding Display}" />
+            <Setter Property="Command" Value="{Binding Command}" />
+        </Style>
+
+        <!-- One shared menu placed on the row container, so right-clicking anywhere across the
+             row width opens it rather than only over the text. -->
+        <ContextMenu x:Key="RowContextMenu">
+            <MenuItem Header="Find binding in model mapping"
+                      ItemsSource="{Binding PlacementTarget.Tag.TraceTargets,
+                                            RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Visibility="{Binding PlacementTarget.Tag.HasTraceTargets,
+                                           RelativeSource={RelativeSource AncestorType=ContextMenu},
+                                           Converter={StaticResource BoolToVis}}"
+                      ItemContainerStyle="{StaticResource ContextActionItem}" />
+
+            <MenuItem Header="{Binding PlacementTarget.Tag.ConsumerHeader,
+                                       RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      ItemsSource="{Binding PlacementTarget.Tag.ConsumerTargets,
+                                            RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Visibility="{Binding PlacementTarget.Tag.HasConsumerTargets,
+                                           RelativeSource={RelativeSource AncestorType=ContextMenu},
+                                           Converter={StaticResource BoolToVis}}"
+                      ItemContainerStyle="{StaticResource ContextActionItem}" />
+
+            <!-- Kept separate: a record fans out to everything nested under it, which
+                 should be a deliberate click rather than a surprise. -->
+            <MenuItem Header="{Binding PlacementTarget.Tag.NestedConsumerHeader,
+                                       RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      ItemsSource="{Binding PlacementTarget.Tag.NestedConsumerTargets,
+                                            RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Visibility="{Binding PlacementTarget.Tag.HasNestedConsumerTargets,
+                                           RelativeSource={RelativeSource AncestorType=ContextMenu},
+                                           Converter={StaticResource BoolToVis}}"
+                      ItemContainerStyle="{StaticResource ContextActionItem}" />
+
+            <MenuItem Header="Nothing to trace from this row" IsEnabled="False"
+                      Visibility="{Binding PlacementTarget.Tag.HasAnyContextAction,
+                                           RelativeSource={RelativeSource AncestorType=ContextMenu},
+                                           Converter={StaticResource InverseBoolToVis}}" />
+        </ContextMenu>
+
+        <!-- Lets the view model drive expansion and selection. -->
+        <Style x:Key="NodeContainerStyle" TargetType="{x:Type TreeViewItem}"
+               BasedOn="{StaticResource {x:Type TreeViewItem}}">
+            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+            <Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource BoolToVis}}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+            <Setter Property="Tag"
+                    Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" />
+            <EventSetter Event="RequestBringIntoView" Handler="OnRequestBringIntoView" />
+            <EventSetter Event="PreviewMouseRightButtonDown" Handler="OnRightButtonDown" />
+            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="OnLeftButtonDown" />
+        </Style>
+
+        <HierarchicalDataTemplate DataType="{x:Type vm:TreeNodeViewModel}" ItemsSource="{Binding Children}">
+            <Border x:Name="row" CornerRadius="2" Padding="2,0" Background="Transparent"
+                    BorderThickness="1" BorderBrush="Transparent">
+                <StackPanel Orientation="Horizontal" ToolTip="{Binding Tooltip}">
+                    <!-- One dot per pane whose selection refers to this row. -->
+                    <ItemsControl ItemsSource="{Binding Markers}" VerticalAlignment="Center">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Ellipse Width="8" Height="8" Margin="0,0,4,0"
+                                         Fill="{Binding Color}" ToolTip="{Binding Display}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Border Background="{StaticResource BadgeBrush}" CornerRadius="2"
+                            Padding="4,0" Margin="0,0,6,0" VerticalAlignment="Center"
+                            Visibility="{Binding Badge, Converter={StaticResource EmptyToVis}}">
+                        <TextBlock Text="{Binding Badge}" FontSize="10"
+                                   Foreground="{StaticResource FgMutedBrush}" />
+                    </Border>
+                    <TextBlock x:Name="header" Text="{Binding Header}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Detail}" Margin="10,0,0,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}"
+                               TextTrimming="CharacterEllipsis"
+                               Visibility="{Binding Detail, Converter={StaticResource EmptyToVis}}" />
+                </StackPanel>
+            </Border>
+            <HierarchicalDataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsMatch}" Value="True">
+                    <Setter TargetName="row" Property="Background" Value="{StaticResource MatchBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsNavigationTarget}" Value="True">
+                    <Setter TargetName="row" Property="BorderBrush" Value="{StaticResource FgBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsDimmed}" Value="True">
+                    <Setter TargetName="row" Property="Opacity" Value="0.45" />
+                </DataTrigger>
+            </HierarchicalDataTemplate.Triggers>
+        </HierarchicalDataTemplate>
+    </UserControl.Resources>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="{StaticResource HeaderPanelBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,1" Padding="8,3">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="▲" Command="{Binding PreviousMarkedCommand}" Margin="0,0,2,0"
+                            ToolTip="Scroll to the previous dotted row (selection is left alone)" />
+                    <Button Content="▼" Command="{Binding NextMarkedCommand}" Margin="0,0,2,0"
+                            ToolTip="Scroll to the next dotted row (selection is left alone)" />
+                    <Button Content="◎" Command="{Binding GoToSelectedCommand}" Margin="0,0,10,0"
+                            ToolTip="Scroll back to the selected row" />
+                    <Button Content="＋" Command="{Binding ExpandAllCommand}" Margin="0,0,4,0"
+                            ToolTip="Expand everything under the selected row (or the whole section)" />
+                    <Button Content="－" Command="{Binding CollapseAllCommand}" Margin="0,0,4,0"
+                            ToolTip="Collapse everything under the selected row (or the whole section)" />
+                    <Button Content="&#x1F441;" Command="{Binding ToggleFilterCommand}"
+                            Style="{StaticResource EyeButton}"
+                            ToolTip="{Binding FilterTooltip}" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="9" Height="9" Margin="0,0,6,0" VerticalAlignment="Center"
+                             Fill="{Binding Marker.Color}"
+                             ToolTip="Rows this section points at carry this dot" />
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <TreeView x:Name="Tree" ItemsSource="{Binding Nodes}" BorderThickness="0"
+                  ItemContainerStyle="{StaticResource NodeContainerStyle}"
+                  SelectedItemChanged="OnSelectedItemChanged"
+                  ScrollViewer.CanContentScroll="False"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto" />
+    </DockPanel>
+</UserControl>

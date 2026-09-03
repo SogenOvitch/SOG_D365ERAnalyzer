@@ -1,0 +1,74 @@
+<Window x:Class="D365ERAnalyzer.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:D365ERAnalyzer.Views"
+        Title="D365 ER Analyzer" Height="900" Width="1600"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource WindowBrush}"
+        Foreground="{StaticResource FgBrush}"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="ErrorBrush" Color="#FFE05252" />
+
+        <!-- Turns red when the current search matches nothing. -->
+        <Style x:Key="SearchBox" TargetType="{x:Type TextBox}" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="BorderThickness" Value="1" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SearchFailed}" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource ErrorBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+
+        <!-- toolbar -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource HeaderPanelBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="8,6">
+            <DockPanel>
+                <Button Content="Open folder…" Command="{Binding OpenFolderCommand}" Margin="0,0,16,0"
+                        ToolTip="Load a folder of exported configurations into all three panes" />
+
+                <CheckBox DockPanel.Dock="Left" Content="Exact match"
+                          IsChecked="{Binding ExactMatch, Mode=TwoWay}"
+                          VerticalAlignment="Center" Margin="0,0,12,0"
+                          ToolTip="Match whole identifiers, so $CustTrans no longer matches $CustTrans_OrderBy" />
+
+                <TextBlock DockPanel.Dock="Left" Text="Search" VerticalAlignment="Center"
+                           Margin="0,0,6,0" Foreground="{StaticResource FgMutedBrush}" />
+                <!-- Delay debounces: the source updates 600 ms after the last keystroke, not on
+                     every one, so a long term is searched once rather than character by character. -->
+                <TextBox Style="{StaticResource SearchBox}" VerticalAlignment="Center"
+                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=600}"
+                         ToolTip="Highlights matches and opens the branches that contain them" />
+            </DockPanel>
+        </Border>
+
+        <!-- status bar -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource ControlBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="8,4">
+            <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" />
+        </Border>
+
+        <!-- three resizable panes -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <!-- 3 / 5 / 4 twelfths: the mapping pane carries the most, the model the least. -->
+                <ColumnDefinition Width="3*" MinWidth="240" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="5*" MinWidth="240" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="4*" MinWidth="240" />
+            </Grid.ColumnDefinitions>
+
+            <views:ConfigPaneView Grid.Column="0" DataContext="{Binding ModelPane}" />
+            <GridSplitter Grid.Column="1" Style="{StaticResource ColumnSplitter}" />
+            <views:ConfigPaneView Grid.Column="2" DataContext="{Binding MappingPane}" />
+            <GridSplitter Grid.Column="3" Style="{StaticResource ColumnSplitter}" />
+            <views:ConfigPaneView Grid.Column="4" DataContext="{Binding FormatPane}" />
+        </Grid>
+    </DockPanel>
+</Window>

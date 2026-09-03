@@ -1,0 +1,58 @@
+# ---- build output ----
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# ---- Visual Studio / Rider / VS Code ----
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.DotSettings.user
+
+# ---- NuGet ----
+*.nupkg
+*.snupkg
+packages/
+!packages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.assets.json
+
+# ---- test and coverage ----
+[Tt]est[Rr]esult*/
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+
+# ---- publish ----
+publish/
+*.publishsettings
+PublishScripts/
+
+# ---- OS noise ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ---- misc ----
+*.tmp
+*.bak
+*.cache
+*.pidb
+*.svclog
+
+# ---- exported ER configurations ----
+# The samples in this repository are real exported configurations and can carry customer data
+# (company names, registration numbers, bank account fields). Uncomment to keep them out of
+# version control, or replace them with anonymised exports.
+# samples/
