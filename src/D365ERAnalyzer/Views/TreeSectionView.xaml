@@ -11,6 +11,7 @@
     <UserControl.Resources>
         <conv:EmptyToVisibilityConverter x:Key="EmptyToVis" />
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:ScaleConverter x:Key="Scale" />
         <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
 
         <!-- The eye needs its own template. The shared Button template swaps the background on
@@ -21,7 +22,6 @@
 
         <Style x:Key="EyeButton" TargetType="{x:Type Button}">
             <Setter Property="FontFamily" Value="Segoe UI Emoji" />
-            <Setter Property="FontSize" Value="11" />
             <Setter Property="Foreground" Value="{StaticResource FgBrush}" />
             <Setter Property="Padding" Value="6,1" />
             <Setter Property="Template">
@@ -139,13 +139,17 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    <TextBlock x:Name="header" Text="{Binding Header}" VerticalAlignment="Center" />
+                    <!-- After the name, so a column of names stays flush left and the alphabetical
+                         order is readable down the tree. -->
                     <Border Background="{StaticResource BadgeBrush}" CornerRadius="2"
-                            Padding="4,0" Margin="0,0,6,0" VerticalAlignment="Center"
+                            Padding="4,0" Margin="6,0,0,0" VerticalAlignment="Center"
                             Visibility="{Binding Badge, Converter={StaticResource EmptyToVis}}">
-                        <TextBlock Text="{Binding Badge}" FontSize="10"
+                        <TextBlock Text="{Binding Badge}"
+                                   FontSize="{Binding FontSize, RelativeSource={RelativeSource AncestorType=Window},
+                                                      Converter={StaticResource Scale}, ConverterParameter=0.82}"
                                    Foreground="{StaticResource FgMutedBrush}" />
                     </Border>
-                    <TextBlock x:Name="header" Text="{Binding Header}" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding Detail}" Margin="10,0,0,0" VerticalAlignment="Center"
                                Foreground="{StaticResource FgMutedBrush}"
                                TextTrimming="CharacterEllipsis"
@@ -158,6 +162,10 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsNavigationTarget}" Value="True">
                     <Setter TargetName="row" Property="BorderBrush" Value="{StaticResource FgBrush}" />
+                </DataTrigger>
+                <!-- Last, so the row a menu is open on is identifiable whatever else it is. -->
+                <DataTrigger Binding="{Binding IsContextTarget}" Value="True">
+                    <Setter TargetName="row" Property="BorderBrush" Value="{StaticResource ContextBrush}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsDimmed}" Value="True">
                     <Setter TargetName="row" Property="Opacity" Value="0.45" />

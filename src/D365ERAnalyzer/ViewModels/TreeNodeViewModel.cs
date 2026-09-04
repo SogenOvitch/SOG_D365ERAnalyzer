@@ -22,6 +22,7 @@ public sealed class TreeNodeViewModel : ObservableObject
     private bool _isMatch;
     private bool _isVisible = true;
     private bool _isNavigationTarget;
+    private bool _isContextTarget;
 
     public TreeNodeViewModel()
     {
@@ -131,6 +132,17 @@ public sealed class TreeNodeViewModel : ObservableObject
     {
         get => _isNavigationTarget;
         set => Set(ref _isNavigationTarget, value);
+    }
+
+    /// <summary>
+    /// The row a context menu was opened on. Outlined so it is obvious which row the menu belongs
+    /// to, without selecting it — selecting would recompute the dots and the details panel, which
+    /// is a lot of movement for what is only a request to see a menu.
+    /// </summary>
+    public bool IsContextTarget
+    {
+        get => _isContextTarget;
+        set => Set(ref _isContextTarget, value);
     }
 
     /// <summary>Cleared by a section's dot filter to hide rows unrelated to the current marks.</summary>

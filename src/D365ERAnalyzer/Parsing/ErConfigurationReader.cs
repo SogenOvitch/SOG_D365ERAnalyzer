@@ -24,8 +24,12 @@ public static class ErConfigurationReader
         {
             Envelope     = envelope,
             Labels       = ReadLabels(root),
-            DataModel    = envelope.Kind == ErConfigKind.DataModel    ? ReadDataModel(root)    : null,
-            ModelMapping = envelope.Kind == ErConfigKind.ModelMapping ? ReadModelMapping(root) : null,
+            DataModel    = envelope.Kind == ErConfigKind.DataModel ? ReadDataModel(root) : null,
+
+            // Read unconditionally: mapping lines are not confined to model mapping files. A
+            // format can embed its own, and the same is expected of models, so the reader looks
+            // everywhere and lets the shell decide what to do with what it finds.
+            ModelMapping = ReadModelMapping(root),
             Format       = envelope.Kind == ErConfigKind.Format       ? ReadFormat(root)       : null
         };
     }
@@ -264,7 +268,16 @@ public static class ErConfigurationReader
         if (modelDefinition is null) return roots;
 
         var byPath = new Dictionary<string, ErDatasourceNode>(StringComparer.OrdinalIgnoreCase);
+        var declared = new List<(ErDatasourceNode Node, string? ParentPath)>();
 
+        // Pass one records every declared node before anything is attached.
+        //
+        // Attaching as we read would depend on file order: a child naming a parent that has not
+        // been read yet forces that parent to be synthesised, and when the real declaration turns
+        // up later it becomes a second node at the same path. The samples do exactly this — one
+        // mapping declares $notSentTransactions as a root while 56 children name it as their
+        // parent, and the children written before the declaration ended up under a synthetic copy
+        // while the rest went under the real one, splitting the branch in two.
         foreach (var definition in Contents(modelDefinition).Elements("ERModelItemDefinition"))
         {
             var valueDefinition = definition.Element("ValueDefinition")?
@@ -294,13 +307,23 @@ public static class ErConfigurationReader
                 ModelDescriptor = isModelSource
                                 ? source!.Attribute("DataContainerDescriptorName")?.Value
                                 : null,
-                GroupBy         = ReadGroupBy(source)
+                GroupBy         = ReadGroupBy(source),
+                FormatGuid      = source?.Name.LocalName == "ERExportFormatDatasource"
+                                ? source.Attribute("FormatGUID")?.Value
+                                : null
             };
             node.ReferencedPaths.AddRange(ExpressionPaths.Extract(source));
+            node.ResultPaths.AddRange(ExpressionPaths.ExtractResult(source));
 
-            byPath[fullPath] = node;
-            Attach(node, parentPath, byPath, roots);
+            // First declaration wins the index; a repeat still appears in the tree.
+            byPath.TryAdd(fullPath, node);
+            declared.Add((node, parentPath));
         }
+
+        // Pass two attaches them. Every declared path is now known, so a node is only ever
+        // synthesised for an ancestor that genuinely has no declaration of its own.
+        foreach (var (node, parentPath) in declared)
+            Attach(node, parentPath, byPath, roots);
 
         return roots;
     }
@@ -349,6 +372,8 @@ public static class ErConfigurationReader
                 else current.Children.Add(existing);
             }
 
+            // A declared ancestor found here is placed by its own entry in pass two, so it must
+            // not be added again from underneath.
             current = existing;
         }
 
@@ -418,6 +443,8 @@ public static class ErConfigurationReader
             "EREmptyContainerDataSourceHandler" => ("Container",   null,                            null),
             "ERModelExpressionItem"             => ("Calculated",  null,                            A("ExpressionAsString")),
             "ERModelGroupByFunction"            => ("Group by",    A("ListToGroup"),                null),
+            "ERExportFormatDatasource"          => ("Format",      null,                            null),
+            "ERDataCollectionDatasource"        => ("Collection",  A("ItemType") is { } t ? $"item type {t}" : null, null),
             "ERJoinedList"                      => ("Joined list", A("Path"),                       null),
             "ERListJoinDatasource"              => ("Joined list", A("Path"),                       null),
             _                                   => (source.Name.LocalName, null,                   A("ExpressionAsString"))

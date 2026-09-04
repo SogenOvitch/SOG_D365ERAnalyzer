@@ -39,13 +39,9 @@ public partial class TreeSectionView : UserControl
     }
 
     /// <summary>
-    /// Right-clicking focuses the row under the cursor before the menu opens, so the menu is built
-    /// for that row.
-    /// <para>
-    /// Setting IsSelected is not enough: the row may already be selected in this section while the
-    /// menus reflect a row picked in another section or pane, in which case nothing would change
-    /// and the menu would describe the wrong row. Re-announcing covers both cases.
-    /// </para>
+    /// Right-clicking announces the row under the cursor so the menu is built for it, but does not
+    /// select it: selecting recomputes the dots and the details panel, which is far too much
+    /// movement for what is only a request to open a menu. The row is outlined instead.
     /// </summary>
     private void OnRightButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -54,8 +50,7 @@ public partial class TreeSectionView : UserControl
         if (item.DataContext is not TreeNodeViewModel node) return;
         if (DataContext is not TreeSectionViewModel section) return;
 
-        item.IsSelected = true;
-        section.Reselect(node);
+        section.RequestContext(node);
     }
 
     /// <summary>

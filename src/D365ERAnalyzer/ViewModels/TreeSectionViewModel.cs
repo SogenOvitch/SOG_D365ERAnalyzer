@@ -174,6 +174,11 @@ public sealed class TreeSectionViewModel : ObservableObject
     /// <summary>Asks the view to scroll a row into view — vertically only.</summary>
     public event Action<TreeNodeViewModel>? BringIntoView;
 
+    /// <summary>A context menu was opened on a row, without it becoming the selection.</summary>
+    public event Action<TreeSectionViewModel, TreeNodeViewModel>? ContextRequested;
+
+    public void RequestContext(TreeNodeViewModel node) => ContextRequested?.Invoke(this, node);
+
     public TreeNodeViewModel? SelectedNode
     {
         get => _selectedNode;

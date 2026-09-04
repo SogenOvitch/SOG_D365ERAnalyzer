@@ -18,6 +18,9 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
 
     private TreeNodeViewModel? _bindingRoot;
 
+    /// <summary>Mapping lines contributed by other files, with a note on where each came from.</summary>
+    private IReadOnlyList<MappingSource> _external = Array.Empty<MappingSource>();
+
     public ModelMappingPaneViewModel() : base(ErConfigKind.ModelMapping) { }
 
     public override string OptionLabel => "Mapping line";
@@ -25,32 +28,59 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
     /// <summary>The mapping line currently on screen.</summary>
     public ErMappingDefinition? CurrentMapping => SelectedOption?.Payload as ErMappingDefinition;
 
-    protected override IEnumerable<PaneOption> BuildOptions(ErConfiguration configuration)
+    /// <summary>
+    /// Lists this file's mapping lines and any embedded in the other loaded files.
+    /// <para>
+    /// Mapping lines are not confined to model mapping files: a format can carry its own, and a
+    /// model is expected to be able to as well. They belong in the same list because the reader is
+    /// asking the same question of all of them, but each carries a note saying where it came from
+    /// so a line living inside a format is never mistaken for one of this file's own.
+    /// </para>
+    /// </summary>
+    protected override IEnumerable<PaneOption> BuildOptions(ErConfiguration? configuration)
     {
-        if (configuration.ModelMapping is not { } set) yield break;
+        foreach (var mapping in configuration?.ModelMapping?.Mappings ?? Enumerable.Empty<ErMappingDefinition>())
+            yield return OptionFor(mapping, origin: null);
 
-        foreach (var mapping in set.Mappings)
-            yield return new PaneOption
-            {
-                Display = mapping.Name,
-                Detail  = TextUtil.Join(mapping.RootDescriptor,
-                                        mapping.ModelVersion is null ? null : $"v{mapping.ModelVersion}",
-                                        mapping.IsImport ? "import" : null),
-                Payload = mapping
-            };
+        foreach (var source in _external)
+            yield return OptionFor(source.Mapping, source.Origin);
     }
 
-    protected override string DescribeContent(ErConfiguration configuration)
+    private static PaneOption OptionFor(ErMappingDefinition mapping, string? origin) => new()
     {
-        var set = configuration.ModelMapping;
-        if (set is null) return "No mapping.";
+        Display = mapping.Name,
+        Detail  = TextUtil.Join(mapping.RootDescriptor,
+                                mapping.ModelVersion is null ? null : $"v{mapping.ModelVersion}",
+                                mapping.IsImport ? "import" : null,
+                                origin),
+        Payload = mapping
+    };
 
-        var bindings = set.Mappings.Sum(m => m.Bindings.Count);
-        return $"{set.Mappings.Count} mapping lines  ·  {bindings} bindings total";
+    /// <summary>Replaces the lines contributed by other files and rebuilds the selector.</summary>
+    public void SetExternalMappings(IReadOnlyList<MappingSource> mappings)
+    {
+        _external = mappings;
+        RefreshOptions();
+
+        // The status was written while this file loaded, before any external line had arrived, so
+        // it would otherwise keep reporting a count that no longer matches the selector.
+        if (Configuration is not null || mappings.Count > 0)
+            Status = DescribeContent(Configuration);
+    }
+
+    protected override string DescribeContent(ErConfiguration? configuration)
+    {
+        var own = configuration?.ModelMapping?.Mappings ?? (IReadOnlyList<ErMappingDefinition>)Array.Empty<ErMappingDefinition>();
+        if (own.Count == 0 && _external.Count == 0) return "No mapping.";
+
+        var bindings = own.Concat(_external.Select(e => e.Mapping)).Sum(m => m.Bindings.Count);
+        var borrowed = _external.Count == 0 ? "" : $" (+{_external.Count} from other files)";
+
+        return $"{own.Count + _external.Count} mapping lines{borrowed}  ·  {bindings} bindings total";
     }
 
     protected override IEnumerable<TreeSectionViewModel> BuildSections(
-        ErConfiguration configuration, PaneOption? option)
+        ErConfiguration? configuration, PaneOption? option)
     {
         _sourcesByPath.Clear();
         _bindingRoot = null;
@@ -72,7 +102,7 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
                          mapping.DirectionName),
             Path   = mapping.Name
         };
-        foreach (var source in mapping.Datasources)
+        foreach (var source in TreeSort.Sorted(mapping.Datasources, d => d.Name))
             sourceRoot.Children.Add(DatasourceNode(source, _sourcesByPath, Labels));
         sourceRoot.IsExpanded = true;
         sources.Nodes.Add(sourceRoot);
@@ -110,16 +140,28 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
         // A group-by carries its grouped fields and aggregations in wrapper elements rather than
         // as data source children, so they would otherwise be invisible in the tree.
         if (source.GroupBy is { } groupBy)
-            foreach (var child in GroupByNodes(groupBy, source.FullPath))
+            foreach (var child in GroupByNodes(groupBy, source.FullPath, index))
                 node.Children.Add(child);
 
-        foreach (var child in source.Children)
+        foreach (var child in TreeSort.Sorted(source.Children, c => c.Name))
             node.Children.Add(DatasourceNode(child, index, labels));
 
         return node;
     }
 
-    private static IEnumerable<TreeNodeViewModel> GroupByNodes(ErGroupBySpec groupBy, string parentPath)
+    /// <summary>
+    /// The grouped fields and aggregations of a group-by, as rows that take part in reference
+    /// resolution like any other.
+    /// <para>
+    /// Both kinds read the field they are computed from, so they carry it as a referenced path.
+    /// Aggregations are also read <i>by</i> others, and the address used for that is not the field
+    /// they aggregate but "&lt;the group-by&gt;/aggregated/&lt;name&gt;" — 130 paths across the
+    /// samples are written that way — so they are indexed under it. An aggregation with no name of
+    /// its own is addressed by the last segment of its field path.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<TreeNodeViewModel> GroupByNodes(
+        ErGroupBySpec groupBy, string parentPath, Dictionary<string, TreeNodeViewModel>? index)
     {
         if (groupBy.GroupedFields.Count > 0)
         {
@@ -131,13 +173,15 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
                 IsExpanded = true
             };
 
-            foreach (var field in groupBy.GroupedFields)
+            foreach (var field in groupBy.GroupedFields.OrderBy(f => f, TreeSort.ByName))
                 grouped.Children.Add(new TreeNodeViewModel
                 {
-                    Header = LastSegment(field),
-                    Badge  = "group by",
-                    Detail = field,
-                    Path   = field
+                    Header          = LastSegment(field),
+                    Badge           = "group by",
+                    Detail          = field,
+                    Path            = field,
+                    ReferencedPaths = new[] { field },
+                    Tooltip         = field
                 });
 
             yield return grouped;
@@ -153,20 +197,29 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
             IsExpanded = true
         };
 
-        foreach (var aggregation in groupBy.Aggregations)
+        foreach (var aggregation in TreeSort.Sorted(groupBy.Aggregations,
+                                                    a => a.Name ?? LastSegment(a.FieldPath)))
         {
             var kind = aggregation.Kind == ErAggregationKind.Unknown && aggregation.RawKind != 0
                 ? $"agg {aggregation.RawKind}"
                 : aggregation.Kind.ToDisplayName();
 
-            aggregations.Children.Add(new TreeNodeViewModel
+            // Unnamed aggregations are shown, and addressed, by the field they aggregate.
+            var name = aggregation.Name ?? LastSegment(aggregation.FieldPath);
+            var address = $"{parentPath}/aggregated/{name}";
+
+            var node = new TreeNodeViewModel
             {
-                // Unnamed aggregations are shown by the field they aggregate.
-                Header = aggregation.Name ?? LastSegment(aggregation.FieldPath),
-                Badge  = kind,
-                Detail = aggregation.FieldPath,
-                Path   = aggregation.FieldPath
-            });
+                Header          = name,
+                Badge           = kind,
+                Detail          = aggregation.FieldPath,
+                Path            = address,
+                ReferencedPaths = new[] { aggregation.FieldPath },
+                Tooltip         = TextUtil.Join(address, aggregation.FieldPath)
+            };
+
+            index?.TryAdd(address, node);
+            aggregations.Children.Add(node);
         }
 
         yield return aggregations;
@@ -250,8 +303,7 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
         public string Path { get; } = path;
         public ErModelBinding? Binding { get; set; }
 
-        public SortedDictionary<string, Trie> Children { get; } =
-            new(StringComparer.OrdinalIgnoreCase);
+        public SortedDictionary<string, Trie> Children { get; } = new(TreeSort.ByName);
     }
 
     // ---------------------------------------------------------------- lookups
@@ -305,8 +357,10 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
     /// <returns>What happened, for the status line.</returns>
     public string LocateBinding(ModelBindingReference reference)
     {
-        if (Configuration?.ModelMapping is null)
-            return "No model mapping loaded.";
+        // Not "does this pane own a file": a line can come from a model or a format, and those
+        // are just as navigable.
+        if (Options.Count == 0)
+            return "No mapping lines available.";
 
         var option = Options.FirstOrDefault(o => o.Payload is ErMappingDefinition m && MatchesLine(m, reference));
         if (option is null)
@@ -489,4 +543,25 @@ public sealed class ModelMappingPaneViewModel : ConfigPaneViewModel
         row.ReferencedPaths.Any(p =>
             p.Equals(path, StringComparison.OrdinalIgnoreCase) ||
             p.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Names of the current line's data sources that are backed by a format rather than the model.
+    /// Paths beneath these name format components, so they are what makes a mapping embedded in a
+    /// format resolvable against the format pane.
+    /// </summary>
+    public IReadOnlyCollection<string> FormatDatasourceNames =>
+        CurrentMapping?.Datasources
+            .Where(d => d.IsFormatSource)
+            .Select(d => d.Name)
+            .ToList()
+        ?? (IReadOnlyCollection<string>)Array.Empty<string>();
+
+    /// <summary>Every row of this pane, both sections, for a reverse scan.</summary>
+    public IEnumerable<TreeNodeViewModel> AllRows()
+    {
+        foreach (var section in new[] { PrimarySection, SecondarySection })
+        foreach (var root in section?.Nodes ?? Enumerable.Empty<TreeNodeViewModel>())
+        foreach (var row in root.DescendantsAndSelf())
+            yield return row;
+    }
 }

@@ -23,12 +23,12 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
     /// <summary>No selector: all roots are in the tree.</summary>
     public override string OptionLabel => "";
 
-    protected override IEnumerable<PaneOption> BuildOptions(ErConfiguration configuration) =>
+    protected override IEnumerable<PaneOption> BuildOptions(ErConfiguration? configuration) =>
         Enumerable.Empty<PaneOption>();
 
-    protected override string DescribeContent(ErConfiguration configuration)
+    protected override string DescribeContent(ErConfiguration? configuration)
     {
-        if (configuration.DataModel is not { } model) return "No model.";
+        if (configuration?.DataModel is not { } model) return "No model.";
 
         var roots = model.Roots.Count();
         var enums = model.Descriptors.Values.Count(d => d.IsEnum);
@@ -37,12 +37,12 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
     }
 
     protected override IEnumerable<TreeSectionViewModel> BuildSections(
-        ErConfiguration configuration, PaneOption? option)
+        ErConfiguration? configuration, PaneOption? option)
     {
         var section = Section("Data model", PaneMarker.DataModel);
         _index = null;
 
-        if (configuration.DataModel is not { } model) return new[] { section };
+        if (configuration?.DataModel is not { } model) return new[] { section };
 
         _index = ModelSearchIndex.Build(model);
 
@@ -81,7 +81,7 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
         };
 
         if (descriptor.Items.Count > 0)
-            node.SetLazyChildren(() => descriptor.Items.Select(
+            node.SetLazyChildren(() => TreeSort.Sorted(descriptor.Items, i => i.Name).Select(
                 item => ItemNode(model, item, chain, descriptor.Name, labels)));
 
         return node;
@@ -118,7 +118,7 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
         if (target is not null && !cyclic && target.Items.Count > 0)
         {
             var branch = new HashSet<string>(chain, StringComparer.OrdinalIgnoreCase) { target.Name };
-            node.SetLazyChildren(() => target.Items.Select(
+            node.SetLazyChildren(() => TreeSort.Sorted(target.Items, i => i.Name).Select(
                 child => ItemNode(model, child, branch, path, labels)));
         }
 
@@ -154,23 +154,36 @@ public sealed class DataModelPaneViewModel : ConfigPaneViewModel
     /// <summary>
     /// Opens the tree along a "Root/Field/Field" path, materialising each lazy level as it goes.
     /// </summary>
-    private void RevealPath(string path)
+    private void RevealPath(string path) => Walk(path, out _);
+
+    private TreeNodeViewModel? Walk(string path, out bool exact)
     {
+        exact = false;
+
         var current = PrimarySection?.Nodes.FirstOrDefault();
-        if (current is null) return;
+        if (current is null) return null;
 
         current.IsExpanded = true;
 
-        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        var segments = PathText.Segments(path);
+        TreeNodeViewModel? deepest = null;
+        var matched = 0;
+
+        foreach (var segment in segments)
         {
             var next = current.Children.FirstOrDefault(
                 c => c.Header.Equals(segment, StringComparison.OrdinalIgnoreCase));
 
-            if (next is null) return;
+            if (next is null) break;
 
             // Expanding materialises the next level, so the following segment can be found.
             next.IsExpanded = true;
             current = next;
+            deepest = next;
+            matched++;
         }
+
+        exact = matched == segments.Length && segments.Length > 0;
+        return deepest;
     }
 }

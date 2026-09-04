@@ -6,6 +6,7 @@
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource WindowBrush}"
         Foreground="{StaticResource FgBrush}"
+        FontSize="{Binding FontSize}"
         UseLayoutRounding="True">
 
     <Window.Resources>
@@ -30,8 +31,14 @@
         <Border DockPanel.Dock="Top" Background="{StaticResource HeaderPanelBrush}"
                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="8,6">
             <DockPanel>
-                <Button Content="Open folder…" Command="{Binding OpenFolderCommand}" Margin="0,0,16,0"
+                <Button Content="Open folder…" Command="{Binding OpenFolderCommand}" Margin="0,0,10,0"
                         ToolTip="Load a folder of exported configurations into all three panes" />
+
+                <TextBlock Text="Font" VerticalAlignment="Center" Margin="0,0,4,0"
+                           Foreground="{StaticResource FgMutedBrush}" />
+                <TextBox Text="{Binding FontScaleText, UpdateSourceTrigger=PropertyChanged, Delay=400}"
+                         Width="44" VerticalAlignment="Center" Margin="0,0,16,0"
+                         ToolTip="Multiplies the font size of the whole window. 1 is the default size." />
 
                 <!-- Only shown when a loaded configuration actually carries translations. -->
                 <TextBlock DockPanel.Dock="Left" Text="Labels" VerticalAlignment="Center"

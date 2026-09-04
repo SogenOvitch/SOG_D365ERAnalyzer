@@ -1,8 +1,9 @@
 # D365 Electronic Reporting — exported configuration XML schema
 
-Reverse-engineered from three configuration sets — a sales invoice (UBL XML), a purchase order
-(Excel) and a payment (ISO 20022, XML and Excel together). Nine files in all, covering derived and
-base configurations, export and import mappings.
+Reverse-engineered from four configuration sets — a sales invoice (UBL XML), a purchase order
+(Excel), a payment (ISO 20022, XML and Excel together) and a fixed asset movement. Thirteen files
+in all, covering derived and base configurations, export and import mappings, and configurations
+that carry mapping lines inside a format or a model.
 
 The measurements below come from the sales invoice set unless stated otherwise:
 
@@ -12,8 +13,14 @@ The measurements below come from the sales invoice set unless stated otherwise:
 | `Invoice model mapping.xml` | Model mapping | 3.4 MB | 48 078 | 197 | 30 |
 | `UBL Sales e-invoice.xml` | Format (+ format mapping) | 681 KB | 9 446 | 135 | 32 |
 
-Everything below is observed in these files, not recalled. Items I could not confirm are marked
-**[UNVERIFIED]**.
+Everything below is observed in these files, not recalled. Items that could not be confirmed are
+marked **[UNVERIFIED]**.
+
+**This file is meant to be enough on its own.** It records not only the shape of the XML but the
+rules for consuming it: how the trees are rebuilt from flat lists, how a reference is matched to a
+row, how a format is joined to the mapping behind it, and the traps that produce plausible but
+wrong answers. Someone picking the parser up with no other context should be able to work from
+this alone.
 
 ---
 
@@ -50,6 +57,22 @@ under the root `Contents.`**, not by anything in the envelope.
   </Contents.>
 </ERSolutionVersion>
 ```
+
+### The configuration type has to be ranked, not taken from the last marker seen
+
+A file's type is decided by which versioned object it defines, but more than one kind of marker can
+appear in a single file: a format carries its format mapping, and either a format or a data model
+may also carry `ERModelMappingVersion` entries of its own. Reading the markers in order and letting
+the last one win files a model that happens to embed a mapping line as a *model mapping* — which
+sends it to the wrong place and leaves its descriptors unparsed.
+
+The reliable rule is precedence, not order:
+
+| If the file contains | It is a |
+|---|---|
+| `ERDataModel` | Data model, whatever else it carries |
+| otherwise `ERTextFormat` / `ERFormatMapping` | Format |
+| otherwise `ERModelMapping` only | Model mapping |
 
 ### Naming conventions (X++ serialization artifacts)
 
@@ -119,6 +142,16 @@ against `ERDataContainerDescriptor/@Name`, starting from a root descriptor.
 - 34 have `IsEnum="1"` — enum descriptors, whose items are the enum values.
 - `ERDataModel/@Root="AdditionalDocumentReference"` is just the designer's last-selected root.
   It is **not** the model's only root, and the tool should not treat it as such.
+
+**Some descriptors are reachable from nowhere.** A descriptor that is neither flagged `IsRoot` nor
+named by any field's `@TypeDescriptor` cannot be reached by walking the graph at all. It happens:
+one payment model has two such descriptors — and they are precisely the ones every mapping line and
+format in that set binds to, holding 12 and 10 fields between them. An invoice model has one.
+
+They are not errors in the file; D365 evidently reaches them by another route. But any tool that
+renders the model by walking outward from `IsRoot` will show a tree in which those subtrees do not
+exist, and every path into them will fail to match for reasons that look like a resolution bug and
+are not.
 
 **Consequence: the graph can be recursive.** The parser must build the tree lazily (expand on demand)
 with a cycle guard, or it can infinite-loop on a self-referencing descriptor.
@@ -230,6 +263,17 @@ This file confirms your point about multiple mapping lines — it holds **7 inde
 
 The triple (`Model`, `ModelVersion`, `DataContainerDescriptor`) is what the format matches against.
 
+### Mapping lines are not confined to model mapping files
+
+`ERModelMappingVersion` / `ERModelMapping` also appear inside **format** files — one payment format
+embeds a line of its own — and inside **data models**: the fixed asset model carries the only
+mapping line that set has, so the middle pane has nothing to show unless models are read for them
+too. A reader that only looks when the envelope says "model mapping" will miss both.
+
+The reliable approach is to read `ERModelMappingVersion/Mapping/ERModelMapping` from every file
+regardless of its declared type, and to keep track of which file each line came from: a line living
+inside a format is not one of the mapping file's own and should not be presented as such.
+
 ### Not every line declares a root, and versions drift
 
 Two assumptions that the first sample set quietly supported turn out to be false:
@@ -281,6 +325,8 @@ one of them.
 | `ERModelExpressionItem` | `ExpressionAsString`, `SyntaxVersion` | Calculated field |
 | `ERModelGroupByFunction` | `ListToGroup`, `SourceListIsAlreadySorted` | Group-by datasource |
 | `ERJoinedList` / `ERListJoinDatasource` | `Name`, `Path` | Joined list |
+| `ERExportFormatDatasource` | `FormatGUID` | **The format itself** — see below |
+| `ERDataCollectionDatasource` | `CollectDuplicates`, `ItemType` | Collected values |
 
 ---
 
@@ -560,7 +606,115 @@ cells from rendering as 255 rows all reading "ExcelCell".
 
 ---
 
-## 8. The resolution chain (verified end to end)
+## 8. Rebuilding the trees from what is on disk
+
+Three of the structures are stored flat and have to be reassembled. Getting these wrong produces a
+tree that looks plausible and is subtly incorrect.
+
+### Data model: resolve `@TypeDescriptor`, guard the cycle
+
+Descriptors are siblings; the hierarchy is the `@TypeDescriptor` → `@Name` edge, walked from a root.
+The graph *can* be recursive, so every branch must carry the set of descriptors already open above
+it and stop when it meets one again. None of the three models here actually contains a cycle, so
+this guard is defensive — and therefore easy to get wrong without noticing. It is worth testing
+against a synthetic recursive model rather than trusting the samples.
+
+### Data source tree: `@ParentPath` plus synthesised ancestors
+
+**Read every declaration before attaching any of them.** A child may name a parent that appears
+later in the file; attaching as you read forces that parent to be synthesised, and the real
+declaration then becomes a *second* node at the same path. One mapping declares
+`$notSentTransactions` as a root while 56 children name it as their parent, and the children written
+before the declaration end up under the synthetic copy while the rest go under the real one —
+splitting the branch in two and leaving the declared node looking like it feeds nothing.
+
+Note that a genuine double declaration does occur (one mapping declares the same
+`…/ProjInvoiceRevenue/$TaxTrans` path twice), so two nodes at one path is not by itself proof of a
+parsing fault — but two nodes where one is synthesised and one is declared always is.
+
+
+Data sources are a flat list. Each `ERModelItemDefinition` names its parent by path and itself by
+`ERModelItemValueDefinition/@Name`; the full path is the two joined by `/`.
+
+The parent is frequently **not** itself a declared data source. A calculated field can hang off a
+model path such as `Invoice/InvoiceBase`, which exists in the model rather than in this mapping. The
+missing ancestors have to be **synthesised** so the hierarchy reads the way the designer shows it —
+and those synthetic rows must stay flagged as such, because the difference matters:
+
+> **A path that is declared in the mapping is a calculated field. A path that is only synthesised is
+> a model path.** The resolver relies on exactly this to know when to follow a formula onward and
+> when it has reached a real model field.
+
+### Group-by results are addressed by name, not by the field they aggregate
+
+An `ERModelGroupByFunction` holds its grouped fields and its aggregations in wrapper elements, and
+neither appears as a data source child — so a reader that only walks `ERModelItemDefinition` will
+not show them at all.
+
+More importantly, an aggregation is **read under a synthesised address**, not under the field it
+computes from:
+
+```
+<group-by data source path>/aggregated/<aggregation name>
+
+$PaymentByCreditor/aggregated/Amount
+$FirstPO/OrderLine/$LineSum_GroupBy/aggregated/TotalAmount
+```
+
+130 paths across the samples are written that way. An aggregation with no `@Name` of its own — one
+occurs — is addressed by the last segment of its `@FieldPath`. Index aggregations under that
+address or nothing will ever be found to read them.
+
+### A data source can be the format itself
+
+`ERExportFormatDatasource` names a format by GUID, and paths beneath it walk **format component
+names** rather than model fields:
+
+```
+format/Document/CstmrCdtTrfInitn/PmtInf/CdtTrfTxInf
+```
+
+This is how a mapping embedded in a format reads what that format produced. Segments match
+components by `@Name`, skipping the file and folder components that wrap the tree.
+
+### Reading a path *through* a data source needs its result, not its references
+
+Two different questions get asked of a formula, and they have different answers:
+
+- **What does this read?** Every path it mentions — the list a `FILTER` walks *and* the operands of
+  the condition it tests. This is the answer for showing dependencies.
+- **What does this evaluate to?** Only the value-producing branch: the list for `FILTER`, `WHERE`,
+  `FIRSTORNULL` and `ORDERBY`; both branches of an `IF`; the operand of an adapter.
+
+The distinction matters when a path continues *through* a calculated field —
+`$FirstPO/ID`, where `$FirstPO` is `FIRSTORNULL(model.'$PurchPurchase')`. Appending `/ID` to what
+the field evaluates to is correct; appending it to a condition operand produces a path that means
+nothing.
+
+### Matching a referenced path to a row: longest declared prefix
+
+Referenced paths reach into fields that are not rows. `CustInvoiceJour/InvoiceId` names a table
+field; only `CustInvoiceJour` is a declared data source. So a reference is attributed to the
+**longest declared prefix** of its path, not to an exact match — otherwise most references resolve
+to nothing at all.
+
+### Matching a format to its mapping line
+
+The format mapping's model data source carries a model GUID, a revision and a root descriptor. Of
+those:
+
+- the **GUID must agree** (compare parsed, not textually — the casing differs between files);
+- the **root descriptor must agree when the line declares one**, and some lines declare none;
+- the **version need not agree**, and requiring it rejects real pairings — one set has a format on
+  v40, its mapping lines on v76 and the model itself on v99. Use version to rank candidates, not to
+  filter them.
+
+A line that declares no root descriptor agrees on the model alone. That is too weak to call it *the*
+line a format uses; saying so is more useful than picking one.
+
+---
+
+## 9. The resolution chain (verified end to end)
 
 Traced for real on `Invoice/InvoiceBase/Id`:
 
@@ -596,35 +750,52 @@ picks the right one.
 
 ---
 
-## 9. Parser traps
+## 10. Parser traps
+
+Each of these produces a plausible but wrong result rather than an error, which is what makes them
+worth writing down.
 
 1. **`ERExpressionSTringLen`** — capital `T`. Microsoft typo in the element name; match literally.
 2. **`ModelGuid` vs `ModelGUID`** — `ERModelDataSourceHandler` uses `ModelGuid`;
    `ERModelEnumDataSourceHandler` uses `ModelGUID`. Both occur in the same file.
-2. **GUID casing is inconsistent** — `{4B5553D1-…}` in the mapping, `{4b5553d1-…}` in the format
-   handler. All GUID comparisons must be case-insensitive (parse to `Guid`, don't compare strings).
-3. **`@SyntaxVersion` and `@Description` are frequently absent.** Every attribute read must be
-   null-tolerant.
-4. **Label ids in `@Label` / `@Description`** — `@GER_LABEL:CustomerInvoice`, `@SYS28013`. Not
-   resolvable offline; display raw with the `@` prefix visible.
-5. **`&#xA;` in `@ExpressionAsString`** — real newlines. Render multi-line.
-6. **`Contents.` must be skipped**, never shown as a node.
-8. **The model graph can cycle** — lazy expansion with a visited-set guard.
-9. **`ID.` is a GUID on format components but a plain name on model descriptors.** Don't type it
-   as `Guid` globally.
-10. **BOM** — all three files start with a UTF-8 BOM.
-11. **`<` and `>` in paths are XML-escaped** as `&lt;` / `&gt;` — inside `@ItemPath` and `@Path` too,
+3. **GUID casing is inconsistent** — `{4B5553D1-…}` in one file, `{4b5553d1-…}` in another. Parse to
+   a GUID and compare that; never compare the strings.
+4. **Language ids are inconsistently cased too** — `en-us`, not `en-US`. Compare case-insensitively.
+5. **`@SyntaxVersion`, `@Description`, `@Name`, `@DataContainerDescriptor` are all frequently
+   absent.** Every attribute read must be null-tolerant.
+6. **Label ids in `@Label` / `@Description`** — `@GER_LABEL:CustomerInvoice`, `@SYS28013`. Often
+   resolvable from the file itself (§6), but not always; fall back to showing the raw id.
+7. **`&#xA;` in `@ExpressionAsString`** — real newlines. Render multi-line.
+8. **`Contents.` must be skipped**, never shown as a node.
+9. **The model graph can cycle** — expand lazily with a visited-set guard. No sample actually
+   cycles, so this is defensive code that will not be exercised by the files you have; test it
+   against a synthetic recursive model.
+10. **`ID.` is a GUID on format components but a plain name on model descriptors.** Do not type it
+    as a GUID globally.
+11. **BOM** — every file starts with a UTF-8 BOM.
+12. **`<` and `>` in paths are XML-escaped** as `&lt;` / `&gt;` — inside `@ItemPath` and `@Path` too,
     not only in `@ExpressionAsString`. An XML parser decodes them for free, but any regex run over
     the raw file text must match the entity form.
-12. **Never split `@ExpressionAsString` on `.`** — a single-quoted segment can itself contain a dot
+13. **Never split `@ExpressionAsString` on `.`** — a single-quoted segment can itself contain a dot
     (`'CustVendCreditInvoicingJour.CustInvoiceJourCorrection'` is one segment). Resolve from the
-    slash-notation `@ItemPath` instead; treat `@ExpressionAsString` as display-only.
-13. **`$`, `#`, `_` prefixes carry no meaning** — resolve every segment by name lookup against the
-    datasource tree, never by prefix heuristics.
+    slash-notation `@ItemPath` instead; treat `@ExpressionAsString` as display-only. The two can
+    also simply disagree — see §5.
+14. **`$`, `#`, `_` prefixes carry no meaning** — resolve every segment by name lookup against the
+    data source tree, never by prefix heuristics.
+15. **`@Name` is not a reliable caption.** Excel cells and sheets carry none; 255 of 315 cells in
+    the samples have no `@Name` at all. Fall back through `@ExcelSheetName`, `@ExcelRange`,
+    `@Value` and finally the bound formula.
+16. **Navigate to bindings, do not search for them.** A `Delta` holds its own copies of
+    `ERDataContainerBinding` and `ERModelMapping`. Reading them by descendant search picks up
+    customisation records as if they were live definitions; walk
+    `ERModelMappingVersion/Mapping/ERModelMapping/Binding` explicitly instead.
+17. **A format or a model can hold mapping lines.** Do not read `ERModelMapping` only from files
+    whose envelope says "model mapping" (§3), and do not let finding one change what the file is
+    taken to be (§1).
+18. **Group-by aggregations are not addressed by the field they aggregate** but by
+    `<group-by>/aggregated/<name>` (§8). Indexing them by field path leaves them unreachable.
 
----
-
-## 10. Open questions
+## 11. Open questions
 
 1. **`@Multiplicity`** — `1`, `20`, `200` observed. What is the enum?
 2. **`@VersionStatus`** — `1` and `2` observed. Draft / Completed / Shared / Discarded mapping?

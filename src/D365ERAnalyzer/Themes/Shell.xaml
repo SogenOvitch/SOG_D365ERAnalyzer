@@ -17,6 +17,8 @@
     </ResourceDictionary.MergedDictionaries>
 
     <SolidColorBrush x:Key="MatchBrush"       Color="#FF6B5300" />
+    <!-- Outline for the row a context menu is open on. -->
+    <SolidColorBrush x:Key="ContextBrush"      Color="#FFB4B4B4" />
     <SolidColorBrush x:Key="BadgeBrush"       Color="#FF3A3D41" />
     <SolidColorBrush x:Key="HeaderPanelBrush" Color="#FF2D2D30" />
 

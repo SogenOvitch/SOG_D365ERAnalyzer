@@ -10,6 +10,10 @@ This tool puts them in three panes and links them.
 
 ---
 
+## Demo
+
+![alt text](screenshots/demo.png)
+
 ## What it does
 
 **Three panes, five trees.** Data model on the left, model mapping in the middle (split into *Data
@@ -21,16 +25,25 @@ mapping*; right-click a binding or a model field for *Find format rows using thi
 real, not textual — it reads the serialized expression trees and matches on the join key that ER
 itself uses.
 
-**Coloured dots instead of guesswork.** Each of the five trees owns a colour. Select any row and
-every row it relates to, in any tree, gets that colour's dot:
+**Coloured dots instead of guesswork.** Each of the five trees owns a colour. Select a row in the
+data sources, bindings, format or format mapping trees and every row it relates to gets that
+colour's dot:
 
 - **bright** — the selected row reads this one
 - **darkened** — this row reads the selected row
 
-Dots from different trees accumulate, so a row referenced from two directions carries two dots.
-Each tree has ▲ ▼ to walk its dotted rows (scroll only — the selection stays put, so the dot set
-does not shift under you), ◎ to return to the selection, and 👁 to hide everything except dotted
-rows and their context.
+Grouped fields and aggregations take part like any other row, addressed the way formulas actually
+reference them. Dots from different trees accumulate, so a row referenced from two directions
+carries two dots. Each tree has ▲ ▼ to walk its dotted rows (scroll only — the selection stays put,
+so the dot set does not shift under you), ◎ to return to the selection, and 👁 to hide everything
+except dotted rows and their context.
+
+The data model tree is deliberately outside this: it is there to be read and searched, not marked.
+
+**Mapping lines from wherever they live.** A model mapping file holds several; a format or a data
+model can carry its own. All of them are listed together, each tagged with where it came from, and
+the line a loaded format actually consumes is selected automatically. Closing one file leaves the
+lines the others contributed.
 
 **Search across all three configurations at once**, with per-tree hit counts, a red border when
 nothing matches, and an *exact match* toggle so `$CustTrans` stops dragging in `$CustTrans_OrderBy`.
@@ -39,6 +52,12 @@ branches that were never expanded and the tree opens itself to reach them.
 
 **Details panel** per pane showing the selected row's name, type, path, formula and enable
 condition — read-only but selectable, with the formula's real line breaks preserved.
+
+**Rows sorted** with `$` and `#` names first, then alphabetically, so the hand-written calculated
+fields sit together at the top of each level. The format component tree is the exception and keeps
+document order, because that order *is* the output.
+
+**Font multiplier** in the toolbar, applied to the whole window. Defaults to 1.2.
 
 ---
 
@@ -57,6 +76,9 @@ automatically. Panes can also be loaded one at a time with **Open…**.
 
 > A folder holding several files of one type loads them all in turn and the last one wins. Point it
 > at a folder holding one data model, one model mapping and one format.
+
+The **Font** box next to it multiplies the font size of the whole window; 1 is the WPF default and
+the app starts at 1.2.
 
 ---
 
@@ -111,6 +133,94 @@ own exports, one data model, one model mapping and one format per folder.
 - **Trees are not virtualised.** They measure their full content so the scrollbar is exact and
   scroll-to-row lands precisely; the cost is a real container per expanded row, which is why
   "expand all" stops at 6 000 nodes.
+
+---
+
+## Design decisions
+
+Choices that are not obvious from the code, with the reasoning, so they are not undone by accident.
+
+### Colour identity per section, not per pane
+
+Each of the five trees owns a colour, and a dot on a row says *which tree's selection* refers to it.
+Keying on the pane instead looked simpler and was wrong: Format and Format mapping share a pane, so
+clicking a row that a Format selection had just marked cleared the mark that put it there. A new
+selection clears only its own section's dots, which is what lets marks from two directions coexist
+on one row.
+
+Direction is carried by shade rather than a second hue — bright means *the selection reads this
+row*, dark means *this row reads the selection*. Five sections in two directions would otherwise be
+ten colours to learn.
+
+### Dot navigation scrolls but never selects
+
+▲ ▼ walk the dotted rows; ◎ returns to the selection. They deliberately do not change the selection,
+because selecting recomputes which rows are dotted — stepping through the dots by selecting them
+would destroy the set being walked. The row the walk stopped on is outlined instead, since nothing
+else would show where it is.
+
+### The trees are not virtualised
+
+`ScrollViewer.CanContentScroll="False"`, so the viewer measures the whole expanded content instead
+of estimating it. Virtualisation estimates the extent from the rows it has realised so far, which
+made the scrollbar resize while scrolling, made scroll-to-row land short, and let recycled
+containers carry a stale selection.
+
+The cost is a real container per expanded row, which is why **"expand all" stops at 6 000 nodes**.
+That covers every tree in practice — the largest model root expands to 5 151 rows — while stopping
+an expand-all on the data model root, which would walk 85 000. If a very large expansion ever feels
+slow, this is the trade to revisit.
+
+### The data model is lazy, and search does not depend on the visible tree
+
+The model is a graph that can be recursive, so its tree is built branch by branch with a cycle
+guard. That makes a walk of the visible tree useless for searching: it can only find what is already
+open. Search instead runs over an index built from the graph — about 1 500 entries, each with a
+shortest path from a root — and opens the tree along the path to each hit.
+
+### Selection is per section; the shell remembers all of them
+
+Each tree keeps its own selection, so a pane's details panel shows whichever section was last
+touched. Two consequences that need explicit handling:
+
+- Clicking a row that is *already* selected in its own section raises no event, so the left click
+  re-announces the row rather than relying on a selection change.
+- When one pane rebuilds — switching mapping line, say — the dots cast onto it by *other* panes have
+  to be laid down again on the new rows, so the shell keeps every section's live selection.
+
+### Right-clicking does not select
+
+Opening a menu is a question, not a decision. Selecting a row recomputes the dots, the details
+panel and the context menus, which is a lot of movement to ask for in passing — so a right-click
+outlines the row in grey and builds the menu for it while the selection, the dots and the details
+stay exactly where they were.
+
+### The trace menu follows calculated fields; the dots do not
+
+Two resolutions are kept for each format row. The dots use direct references only, so what they
+show can be trusted literally. The right-click trace follows calculated fields onwards —
+`$FirstPO` → `model/$PurchPurchase` → `model/PurchaseOrderInquiry` — because a jump is a deliberate
+question about where a value comes from, and the chain is the answer. One format in the samples
+addresses everything through calculated fields, and without this its trace menu would be empty.
+
+### Rows are sorted, except where order is meaning
+
+`$` and `#` names first, then alphabetical. Those prefixes mark fields somebody added by hand,
+which is usually what a reader is looking for. The format component tree keeps document order
+instead: the sequence of components *is* the emitted document, and sorting it would describe a
+file the format never produces.
+
+### Read-only, and resolved from the AST
+
+Nothing is ever written back to a configuration. Every value shown is resolved from the serialized
+expression tree, never by parsing the human-readable formula: the two can disagree, and the AST is
+what actually runs. See `docs/er-xml-schema.md` §5 and §10.
+
+### The theme file is used verbatim
+
+`Themes/Dark.xaml` is dropped in unchanged so it stays shareable with other tools.
+`Themes/Shell.xaml` holds only what it does not cover — menus, splitters, and the templates the
+tree and the filter toggle need in order to keep their state visible on hover.
 
 ---
 

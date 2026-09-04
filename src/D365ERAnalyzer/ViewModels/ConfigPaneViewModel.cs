@@ -148,18 +148,7 @@ public abstract class ConfigPaneViewModel : ObservableObject
             stopwatch.Stop();
 
             Configuration = configuration;
-
-            Options.Clear();
-            foreach (var option in BuildOptions(configuration))
-                Options.Add(option);
-            OnPropertyChanged(nameof(HasOptions));
-
-            // Assigned through the field: the property setter would rebuild before the status is set.
-            _selectedOption = Options.FirstOrDefault(o => IsDefaultOption(configuration, o))
-                              ?? Options.FirstOrDefault();
-            OnPropertyChanged(nameof(SelectedOption));
-
-            Rebuild();
+            RefreshOptions();
 
             Status = configuration.Envelope.Kind == ExpectedKind
                 ? $"{DescribeContent(configuration)}  ·  {stopwatch.ElapsedMilliseconds} ms"
@@ -173,17 +162,55 @@ public abstract class ConfigPaneViewModel : ObservableObject
             OnPropertyChanged(nameof(HasOptions));
             Status = $"⚠ Could not read: {ex.Message}";
         }
+
+        ContentChanged?.Invoke(this);
+    }
+
+    /// <summary>
+    /// Raised whenever this pane's file changes — loaded or closed — so the shell can re-pool
+    /// anything shared between panes. Closing matters as much as loading: a mapping line this
+    /// pane was contributing has to stop being offered elsewhere.
+    /// </summary>
+    public event Action<ConfigPaneViewModel>? ContentChanged;
+
+    /// <summary>
+    /// Rebuilds the selector and the trees, keeping the current choice when it is still on offer.
+    /// <para>
+    /// Options do not come only from this pane's own file — the mapping pane also lists lines
+    /// embedded in a format — so this has to be callable when something else changes.
+    /// </para>
+    /// </summary>
+    public void RefreshOptions()
+    {
+        var previous = _selectedOption?.Payload;
+
+        Options.Clear();
+        foreach (var option in BuildOptions(_configuration))
+            Options.Add(option);
+        OnPropertyChanged(nameof(HasOptions));
+
+        // Assigned through the field: the property setter would rebuild before the caller is ready.
+        _selectedOption = Options.FirstOrDefault(o => ReferenceEquals(o.Payload, previous))
+                          ?? Options.FirstOrDefault(o => IsDefaultOption(_configuration, o))
+                          ?? Options.FirstOrDefault();
+        OnPropertyChanged(nameof(SelectedOption));
+
+        Rebuild();
     }
 
     private void Close()
     {
         Configuration = null;
-        ClearSections();
-        Options.Clear();
-        OnPropertyChanged(nameof(HasOptions));
-        _selectedOption = null;
-        OnPropertyChanged(nameof(SelectedOption));
-        Status = "No file loaded.";
+
+        // Rebuild rather than clear: the selector may still hold mapping lines contributed by a
+        // model or a format, and those have nothing to do with the file being closed.
+        RefreshOptions();
+
+        Status = Options.Count == 0
+            ? "No file loaded."
+            : $"No file loaded  ·  {Options.Count} line(s) from other files";
+
+        ContentChanged?.Invoke(this);
     }
 
     private void ClearSections()
@@ -197,11 +224,20 @@ public abstract class ConfigPaneViewModel : ObservableObject
 
     private void Unsubscribe(TreeSectionViewModel? section)
     {
-        if (section is not null) section.SelectionChanged -= OnSectionSelectionChanged;
+        if (section is null) return;
+
+        section.SelectionChanged -= OnSectionSelectionChanged;
+        section.ContextRequested -= OnSectionContextRequested;
     }
+
+    private void OnSectionContextRequested(TreeSectionViewModel section, TreeNodeViewModel node) =>
+        NodeContextRequested?.Invoke(this, section, node);
 
     /// <summary>Raised after any row in this pane is selected.</summary>
     public event Action<ConfigPaneViewModel, TreeSectionViewModel, TreeNodeViewModel>? NodeSelected;
+
+    /// <summary>Raised when a row is right-clicked, which does not change the selection.</summary>
+    public event Action<ConfigPaneViewModel, TreeSectionViewModel, TreeNodeViewModel>? NodeContextRequested;
 
     /// <summary>Raised after the tree sections are rebuilt, e.g. on a new mapping line.</summary>
     public event Action<ConfigPaneViewModel>? SectionsRebuilt;
@@ -225,18 +261,24 @@ public abstract class ConfigPaneViewModel : ObservableObject
     /// <summary>Rebuilds the trees, e.g. after the display language changes.</summary>
     public void RebuildTree()
     {
-        if (_configuration is not null) Rebuild();
+        if (_configuration is not null || Options.Count > 0) Rebuild();
     }
 
     private void Rebuild()
     {
         ClearSections();
-        if (_configuration is null) return;
+
+        // A pane can have content without a file of its own: the mapping pane shows lines embedded
+        // in a format even when no model mapping has been opened.
+        if (_configuration is null && Options.Count == 0) return;
 
         var sections = BuildSections(_configuration, _selectedOption).ToList();
 
         foreach (var section in sections)
+        {
             section.SelectionChanged += OnSectionSelectionChanged;
+            section.ContextRequested += OnSectionContextRequested;
+        }
 
         PrimarySection   = sections.ElementAtOrDefault(0);
         SecondarySection = sections.ElementAtOrDefault(1);
@@ -246,15 +288,15 @@ public abstract class ConfigPaneViewModel : ObservableObject
 
     // ---- subclass hooks ----
 
-    protected abstract IEnumerable<PaneOption> BuildOptions(ErConfiguration configuration);
+    protected abstract IEnumerable<PaneOption> BuildOptions(ErConfiguration? configuration);
 
     protected abstract IEnumerable<TreeSectionViewModel> BuildSections(
-        ErConfiguration configuration, PaneOption? option);
+        ErConfiguration? configuration, PaneOption? option);
 
-    protected abstract string DescribeContent(ErConfiguration configuration);
+    protected abstract string DescribeContent(ErConfiguration? configuration);
 
     /// <summary>Which option to preselect on load. Defaults to the first.</summary>
-    protected virtual bool IsDefaultOption(ErConfiguration configuration, PaneOption option) => false;
+    protected virtual bool IsDefaultOption(ErConfiguration? configuration, PaneOption option) => false;
 
     /// <summary>Creates a section wired to report expand-budget overruns into the pane status.</summary>
     protected TreeSectionViewModel Section(string title, PaneMarker marker) =>

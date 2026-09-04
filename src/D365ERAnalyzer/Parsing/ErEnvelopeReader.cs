@@ -15,7 +15,10 @@ public static class ErEnvelopeReader
         string? solName = null, solDesc = null, baseName = null, baseRef = null, countries = null, vendor = null;
         string? pubVersion = null, desc = null, timestamp = null, status = null;
         int? versionNumber = null;
-        var kind = ErConfigKind.Unknown;
+        // Several markers can appear in one file — a model or a format may embed mapping lines of
+        // its own — so they are collected and ranked at the end rather than letting whichever comes
+        // last decide. Without this a model carrying a mapping line is filed as a model mapping.
+        bool sawDataModel = false, sawFormat = false, sawMapping = false;
         var objects = new List<ErContainedObject>();
 
         var settings = new XmlReaderSettings
@@ -56,7 +59,7 @@ public static class ErEnvelopeReader
                 // ---- the elements that identify the configuration type ----
 
                 case "ERDataModel":
-                    kind = ErConfigKind.DataModel;
+                    sawDataModel = true;
                     objects.Add(new ErContainedObject
                     {
                         Kind        = "Data model",
@@ -68,7 +71,7 @@ public static class ErEnvelopeReader
                     break;
 
                 case "ERModelMapping":
-                    kind = ErConfigKind.ModelMapping;
+                    sawMapping = true;
                     objects.Add(new ErContainedObject
                     {
                         Kind        = "Mapping line",
@@ -84,7 +87,7 @@ public static class ErEnvelopeReader
                     break;
 
                 case "ERTextFormat":
-                    kind = ErConfigKind.Format;
+                    sawFormat = true;
                     objects.Add(new ErContainedObject
                     {
                         Kind        = "Format",
@@ -96,7 +99,7 @@ public static class ErEnvelopeReader
 
                 case "ERFormatMapping":
                     // A format export always carries its format mapping alongside the format itself.
-                    if (kind == ErConfigKind.Unknown) kind = ErConfigKind.Format;
+                    sawFormat = true;
                     objects.Add(new ErContainedObject
                     {
                         Kind        = "Format mapping",
@@ -109,6 +112,13 @@ public static class ErEnvelopeReader
                     break;
             }
         }
+
+        // A file that defines a model is a model, whatever else it also carries; likewise a format.
+        // Only a file with nothing but mapping lines is a model mapping.
+        var kind = sawDataModel ? ErConfigKind.DataModel
+                 : sawFormat    ? ErConfigKind.Format
+                 : sawMapping   ? ErConfigKind.ModelMapping
+                                : ErConfigKind.Unknown;
 
         var envelope = new ErEnvelope
         {

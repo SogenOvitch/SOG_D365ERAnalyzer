@@ -12,8 +12,15 @@ namespace D365ERAnalyzer.ViewModels.Panes;
 /// </summary>
 public sealed class FormatPaneViewModel : ConfigPaneViewModel
 {
-    /// <summary>Every model path each format row leads to, resolved once when the tree is built.</summary>
+    /// <summary>Direct references per row, resolved once when the tree is built. Drives the dots.</summary>
     private readonly Dictionary<TreeNodeViewModel, IReadOnlyList<ModelBindingReference>> _references = new();
+
+    /// <summary>
+    /// References found by following calculated fields onwards. Only the trace menu uses these:
+    /// a jump is a deliberate question about where a value comes from, and following the chain is
+    /// the answer, whereas the dots stay literal so they can be trusted at a glance.
+    /// </summary>
+    private readonly Dictionary<TreeNodeViewModel, IReadOnlyList<ModelBindingReference>> _deepReferences = new();
 
     /// <summary>Format mapping data source rows by full path, for the green highlight.</summary>
     private readonly Dictionary<string, TreeNodeViewModel> _sourcesByPath =
@@ -23,12 +30,12 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
 
     public override string OptionLabel => "";
 
-    protected override IEnumerable<PaneOption> BuildOptions(ErConfiguration configuration) =>
+    protected override IEnumerable<PaneOption> BuildOptions(ErConfiguration? configuration) =>
         Enumerable.Empty<PaneOption>();
 
-    protected override string DescribeContent(ErConfiguration configuration)
+    protected override string DescribeContent(ErConfiguration? configuration)
     {
-        if (configuration.Format is not { } format) return "No format.";
+        if (configuration?.Format is not { } format) return "No format.";
 
         var components = CountComponents(format.Root);
         var mapping = format.Mapping;
@@ -40,15 +47,16 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
     }
 
     protected override IEnumerable<TreeSectionViewModel> BuildSections(
-        ErConfiguration configuration, PaneOption? option)
+        ErConfiguration? configuration, PaneOption? option)
     {
         _references.Clear();
+        _deepReferences.Clear();
         _sourcesByPath.Clear();
 
         var formatSection  = Section("Format", PaneMarker.Format);
         var mappingSection = Section("Format mapping", PaneMarker.FormatMapping);
 
-        if (configuration.Format is not { } format)
+        if (configuration?.Format is not { } format)
             return new[] { formatSection, mappingSection };
 
         if (format.Root is not null)
@@ -69,7 +77,10 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
             // data source graph for each of the thousand-odd components.
             if (format.Mapping is not null)
                 foreach (var row in formatNode.DescendantsAndSelf())
-                    _references[row] = ResolveAll(row, format.Mapping);
+                {
+                    _references[row]     = ResolveAll(row, format.Mapping);
+                    _deepReferences[row] = ResolveDeep(row, format.Mapping);
+                }
         }
 
         if (format.Mapping is { } mapping)
@@ -85,7 +96,7 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
                 Tooltip = mapping.Id
             };
 
-            foreach (var source in mapping.Datasources)
+            foreach (var source in TreeSort.Sorted(mapping.Datasources, d => d.Name))
                 mappingNode.Children.Add(
                     ModelMappingPaneViewModel.DatasourceNode(source, _sourcesByPath, Labels));
 
@@ -142,6 +153,9 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
             IsDimmed = disabled
         };
 
+        // Deliberately not sorted. The order of format components *is* the output: XML elements
+        // are emitted in this sequence, and a sorted view would describe a document the format
+        // never produces.
         foreach (var child in component.Children)
             node.Children.Add(ComponentNode(child, mapping, path));
 
@@ -232,7 +246,70 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
     /// all of them are returned rather than an arbitrary first.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The model mapping bindings a format row leads to.
+    /// <para>
+    /// A format binding names paths like "Invoice/InvoiceBase/Id". The first segment is a data
+    /// source declared in the format mapping; when it is backed by the model it carries the model
+    /// GUID, revision and root descriptor — the triple that picks one mapping line out of the
+    /// several in a model mapping file — and the rest of the path is the binding key.
+    /// </para>
+    /// <para>
+    /// Direct references only: a path addressed through a calculated field is left where it is
+    /// rather than followed to whatever that field reads.
+    /// </para>
+    /// </summary>
     private static IReadOnlyList<ModelBindingReference> ResolveAll(
+        TreeNodeViewModel node, ErFormatMappingInfo mapping)
+    {
+        if (node.ReferencedPaths.Count == 0) return Array.Empty<ModelBindingReference>();
+
+        var found = new List<ModelBindingReference>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var referenced in node.ReferencedPaths)
+        {
+            var separator = referenced.IndexOf('/');
+            if (separator <= 0 || separator == referenced.Length - 1) continue;
+
+            var datasourceName = referenced[..separator];
+            var remainder      = referenced[(separator + 1)..];
+
+            var source = mapping.Datasources.FirstOrDefault(
+                d => d.Name.Equals(datasourceName, StringComparison.OrdinalIgnoreCase));
+
+            if (source is null || !source.IsModelSource) continue;
+
+            if (seen.Add(referenced))
+                found.Add(new ModelBindingReference(
+                    source.ModelGuid, source.ModelRevision, source.ModelDescriptor,
+                    remainder, datasourceName));
+        }
+
+        return found;
+    }
+
+    /// <summary>Direct model references of a row, used for marking.</summary>
+    public IReadOnlyList<ModelBindingReference> ReferencesFor(TreeNodeViewModel node) =>
+        _references.GetValueOrDefault(node) ?? Array.Empty<ModelBindingReference>();
+
+    /// <summary>
+    /// Model references of a row including those reached through calculated fields. Used by the
+    /// trace menu, where following the chain is the whole point of asking.
+    /// </summary>
+    public IReadOnlyList<ModelBindingReference> TraceReferencesFor(TreeNodeViewModel node) =>
+        _deepReferences.GetValueOrDefault(node) ?? Array.Empty<ModelBindingReference>();
+
+    /// <summary>
+    /// Resolves a row to model references, following calculated data sources on the way.
+    /// <para>
+    /// A path is often addressed through something that stands for something else: one format
+    /// reads <c>$FirstPO/ID</c>, where <c>$FirstPO</c> is <c>FIRSTORNULL(model.'$PurchPurchase')</c>
+    /// and that is <c>model.PurchaseOrderInquiry</c>. The tail travels with each substitution, or
+    /// the field being read is lost and only the record it sits in survives.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<ModelBindingReference> ResolveDeep(
         TreeNodeViewModel node, ErFormatMappingInfo mapping)
     {
         if (node.ReferencedPaths.Count == 0) return Array.Empty<ModelBindingReference>();
@@ -248,6 +325,12 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
             var referenced = pending.Dequeue();
             if (!visited.Add(referenced)) continue;
 
+            if (TryRewrite(referenced, declared, out var rewritten))
+            {
+                foreach (var next in rewritten) pending.Enqueue(next);
+                continue;
+            }
+
             var separator = referenced.IndexOf('/');
             if (separator <= 0 || separator == referenced.Length - 1) continue;
 
@@ -257,31 +340,55 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
             var source = mapping.Datasources.FirstOrDefault(
                 d => d.Name.Equals(datasourceName, StringComparison.OrdinalIgnoreCase));
 
-            // Enums, CalcFunctions and friends never lead to a model binding.
-            if (source is null || !source.IsModelSource) continue;
+            if (source is null) continue;
 
-            // A node the format mapping declares over the model is a calculated field, not a model
-            // field: follow its formula instead of looking for a binding that cannot exist.
-            if (declared.TryGetValue(referenced, out var overlay) && !overlay.IsSynthetic)
+            if (source.IsModelSource)
             {
-                foreach (var next in overlay.ReferencedPaths)
-                    pending.Enqueue(next);
+                if (seen.Add(referenced))
+                    found.Add(new ModelBindingReference(
+                        source.ModelGuid, source.ModelRevision, source.ModelDescriptor,
+                        remainder, datasourceName));
 
                 continue;
             }
 
-            if (seen.Add(referenced))
-                found.Add(new ModelBindingReference(
-                    source.ModelGuid, source.ModelRevision, source.ModelDescriptor,
-                    remainder, datasourceName));
+            foreach (var next in source.ResultPaths)
+                pending.Enqueue($"{next}/{remainder}");
         }
 
         return found;
     }
 
-    /// <summary>Model mapping targets reachable from a format row, for the context submenu.</summary>
-    public IReadOnlyList<ModelBindingReference> ReferencesFor(TreeNodeViewModel node) =>
-        _references.GetValueOrDefault(node) ?? Array.Empty<ModelBindingReference>();
+    /// <summary>
+    /// Rewrites a path through the longest data source along it that stands for something else.
+    /// Nothing after that source means the row simply reads it, so every path its formula touches
+    /// counts; something after it means only the value it evaluates to can carry the tail.
+    /// </summary>
+    private static bool TryRewrite(
+        string path, Dictionary<string, ErDatasourceNode> declared, out List<string> rewritten)
+    {
+        rewritten = new List<string>();
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        for (var length = segments.Length; length > 0; length--)
+        {
+            var candidate = string.Join('/', segments.Take(length));
+
+            if (!declared.TryGetValue(candidate, out var source) || source.IsSynthetic) continue;
+
+            var tail = string.Join('/', segments.Skip(length));
+            var targets = tail.Length == 0 ? source.ReferencedPaths : source.ResultPaths;
+            if (targets.Count == 0) continue;
+
+            foreach (var target in targets)
+                rewritten.Add(tail.Length == 0 ? target : $"{target}/{tail}");
+
+            return rewritten.Count > 0;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// The reverse direction: which format rows end up reading a given model field. A path matches
@@ -390,5 +497,159 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
 
             if (ModelMappingPaneViewModel.Reads(row, path)) yield return row;
         }
+    }
+
+    /// <summary>
+    /// Finds the component rows named by a set of data source paths.
+    /// <para>
+    /// A mapping embedded in a format reads that format through a data source backed by
+    /// <c>ERExportFormatDatasource</c>, and the path beneath it walks component names —
+    /// "format/Document/CstmrCdtTrfInitn/PmtInf". Segments are matched against descendants rather
+    /// than direct children, because the path skips the file and folder components that wrap the
+    /// tree.
+    /// </para>
+    /// </summary>
+    /// <param name="prefixes">Names of the data sources that stand for this format.</param>
+    public IReadOnlyList<TreeNodeViewModel> FindComponentRows(
+        IEnumerable<string> paths, IReadOnlyCollection<string> prefixes)
+    {
+        var found = new List<TreeNodeViewModel>();
+
+        var root = PrimarySection?.Nodes.FirstOrDefault();
+        if (root is null || prefixes.Count == 0) return found;
+
+        foreach (var path in paths)
+        {
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length < 2) continue;
+            if (!prefixes.Contains(segments[0], StringComparer.OrdinalIgnoreCase)) continue;
+
+            var row = Descend(root, segments.Skip(1));
+            if (row is not null && !found.Contains(row)) found.Add(row);
+        }
+
+        return found;
+    }
+
+    /// <summary>The deepest row reachable by following the segments; null if the first one misses.</summary>
+    private static TreeNodeViewModel? Descend(TreeNodeViewModel root, IEnumerable<string> segments)
+    {
+        var current = root;
+
+        foreach (var segment in segments)
+        {
+            var next = FindDescendant(current, segment);
+            if (next is null) break;
+
+            current = next;
+        }
+
+        return ReferenceEquals(current, root) ? null : current;
+    }
+
+    /// <summary>Breadth-first so the shallowest match wins when a name repeats deeper down.</summary>
+    private static TreeNodeViewModel? FindDescendant(TreeNodeViewModel from, string name)
+    {
+        var queue = new Queue<TreeNodeViewModel>(from.Children);
+
+        while (queue.Count > 0)
+        {
+            var node = queue.Dequeue();
+            if (node.Header.Equals(name, StringComparison.OrdinalIgnoreCase)) return node;
+
+            foreach (var child in node.Children) queue.Enqueue(child);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Reads a format mapping path as a model path by dropping the data source name it is
+    /// addressed through — "model/AssetBalancesPeriod" is the model path "AssetBalancesPeriod".
+    /// </summary>
+    public ModelBindingReference? ModelPathOf(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+
+        var separator = path.IndexOf('/');
+        if (separator <= 0 || separator == path.Length - 1) return null;
+
+        var prefix = path[..separator];
+
+        var source = ModelDatasources.FirstOrDefault(
+            d => d.Name.Equals(prefix, StringComparison.OrdinalIgnoreCase));
+
+        return source is null
+            ? null
+            : new ModelBindingReference(source.ModelGuid, source.ModelRevision,
+                                        source.ModelDescriptor, path[(separator + 1)..], prefix);
+    }
+
+    /// <summary>
+    /// Format mapping rows standing for a model path, or for something under it.
+    /// <para>
+    /// A row qualifies either by being that path — its own name is addressed through the model
+    /// data source — or by reading it. A group-by named <c>$RecordsByAsset</c> is not called
+    /// anything like the list it groups, but it is the row that represents it.
+    /// </para>
+    /// </summary>
+    public IEnumerable<TreeNodeViewModel> FindDatasourceRowsForModel(string? rootDescriptor, string modelPath)
+    {
+        TreeNodeViewModel? nearestAncestor = null;
+        var ancestorDepth = -1;
+
+        foreach (var (path, row) in _sourcesByPath)
+        {
+            var candidates = new[] { path }.Concat(row.ReferencedPaths).ToList();
+
+            if (candidates.Any(c => Stands(c, rootDescriptor, modelPath)))
+            {
+                yield return row;
+                continue;
+            }
+
+            // The row may instead sit above the path: a binding on "InvoiceBase/Id" has no row of
+            // its own in the format mapping, but "Invoice/InvoiceBase" is there and is where that
+            // field is reached from. Only the deepest such row is worth marking — every ancestor
+            // above it would match too, and marking the whole chain says nothing.
+            foreach (var candidate in candidates)
+            {
+                if (Covers(candidate, rootDescriptor, modelPath) is not { } depth) continue;
+                if (depth <= ancestorDepth) continue;
+
+                ancestorDepth = depth;
+                nearestAncestor = row;
+            }
+        }
+
+        if (nearestAncestor is not null) yield return nearestAncestor;
+    }
+
+    /// <summary>Depth of a row whose model path is a strict ancestor of <paramref name="modelPath"/>.</summary>
+    private int? Covers(string path, string? rootDescriptor, string modelPath)
+    {
+        if (ModelPathOf(path) is not { } reference) return null;
+
+        if (rootDescriptor is not null && reference.RootDescriptor is not null &&
+            !reference.RootDescriptor.Equals(rootDescriptor, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (reference.ModelPath.Length == 0) return null;
+
+        return modelPath.StartsWith(reference.ModelPath + "/", StringComparison.OrdinalIgnoreCase)
+            ? reference.ModelPath.Count(c => c == '/') + 1
+            : null;
+    }
+
+    private bool Stands(string path, string? rootDescriptor, string modelPath)
+    {
+        if (ModelPathOf(path) is not { } reference) return false;
+
+        if (rootDescriptor is not null && reference.RootDescriptor is not null &&
+            !reference.RootDescriptor.Equals(rootDescriptor, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return reference.ModelPath.Equals(modelPath, StringComparison.OrdinalIgnoreCase)
+            || reference.ModelPath.StartsWith(modelPath + "/", StringComparison.OrdinalIgnoreCase);
     }
 }

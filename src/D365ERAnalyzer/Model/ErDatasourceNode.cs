@@ -35,6 +35,15 @@ public sealed class ErDatasourceNode
     public bool IsModelSource => ModelDescriptor is not null;
 
     /// <summary>
+    /// Set when the source is an <c>ERExportFormatDatasource</c>: the data source *is* the format,
+    /// and paths beneath it name format components rather than model fields. This is how a mapping
+    /// embedded in a format reads what that format produced.
+    /// </summary>
+    public string? FormatGuid { get; init; }
+
+    public bool IsFormatSource => FormatGuid is not null;
+
+    /// <summary>
     /// True for the placeholder rows invented to bridge a declared node to a parent that lives in
     /// the model rather than in this mapping. They are scaffolding, not declarations.
     /// </summary>
@@ -45,6 +54,13 @@ public sealed class ErDatasourceNode
 
     /// <summary>Model/datasource paths referenced by <see cref="Expression"/>.</summary>
     public List<string> ReferencedPaths { get; } = new();
+
+    /// <summary>
+    /// The subset of <see cref="ReferencedPaths"/> this source actually evaluates to. Used when a
+    /// path is rewritten through this source, where the operands of its conditions would be the
+    /// wrong thing to follow.
+    /// </summary>
+    public List<string> ResultPaths { get; } = new();
 
     public List<ErDatasourceNode> Children { get; } = new();
 }
