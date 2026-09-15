@@ -144,6 +144,7 @@ public sealed class FormatPaneViewModel : ConfigPaneViewModel
             Path            = path,
             Expression      = value?.Expression,
             Condition       = enabled?.Expression,
+            Value           = component.Value,
             Payload         = component,
             ReferencedPaths = ReferencedBy(bindings),
             Tooltip    = TextUtil.Join(

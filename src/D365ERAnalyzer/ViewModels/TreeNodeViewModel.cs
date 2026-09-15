@@ -60,6 +60,13 @@ public sealed class TreeNodeViewModel : ObservableObject
     /// <summary>A secondary formula, e.g. the Enabled condition of a format component.</summary>
     public string? Condition { get; init; }
 
+    /// <summary>
+    /// A literal typed into the component itself rather than bound — the <c>@Value</c> of an XML
+    /// attribute or a string. Usually present exactly when there is no formula, and then it is
+    /// the only place the emitted text can be read.
+    /// </summary>
+    public string? Value { get; init; }
+
     /// <summary>Data source paths this row's formula refers to.</summary>
     public IReadOnlyList<string> ReferencedPaths { get; init; } = Array.Empty<string>();
 

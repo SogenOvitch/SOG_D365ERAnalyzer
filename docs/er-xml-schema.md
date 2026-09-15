@@ -604,6 +604,14 @@ Consequence for any UI: `@Name` is the wrong thing to key a caption on. Falling 
 `@ExcelSheetName`, `@ExcelRange`, `@Value` and finally the bound formula is what keeps a sheet of
 cells from rendering as 255 rows all reading "ExcelCell".
 
+**`@Value` is a literal typed into the component**, the only non-expression `Value` attribute in
+the samples: 213 on `ERTextFormatXMLAttribute` (namespaces, fixed scheme codes) and 65 on
+`ERTextFormatString`. It is normally present exactly when the component has no value binding (only
+7 of the 278 also carry one, so show both rather than choosing), and then it is the only place the
+emitted text exists — a search over formulas alone never finds it.
+The reverse is not true: a fixed code can just as well be a string constant inside a formula, as
+with the `"0225"` fallback of `cbc:EndpointID/schemeID`, so a search has to read both.
+
 ---
 
 ## 8. Rebuilding the trees from what is on disk

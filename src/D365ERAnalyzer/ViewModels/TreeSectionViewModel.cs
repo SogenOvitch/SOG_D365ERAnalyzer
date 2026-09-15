@@ -24,6 +24,7 @@ public sealed class TreeSectionViewModel : ObservableObject
     private TreeNodeViewModel? _selectedNode;
     private bool _isFiltered;
     private TreeNodeViewModel? _navTarget;
+    private int _matchCount;
 
     public TreeSectionViewModel(string title, PaneMarker marker, Action<string>? notify = null)
     {
@@ -35,8 +36,10 @@ public sealed class TreeSectionViewModel : ObservableObject
         CollapseAllCommand = new RelayCommand(() => SetExpanded(false), () => Nodes.Count > 0);
         ToggleFilterCommand = new RelayCommand(() => IsFiltered = !IsFiltered, () => Nodes.Count > 0);
 
-        NextMarkedCommand     = new RelayCommand(() => StepMarked(1),  HasMarkedRows);
-        PreviousMarkedCommand = new RelayCommand(() => StepMarked(-1), HasMarkedRows);
+        NextMarkedCommand     = new RelayCommand(() => Step(1,  IsMarked), HasMarkedRows);
+        PreviousMarkedCommand = new RelayCommand(() => Step(-1, IsMarked), HasMarkedRows);
+        NextMatchCommand      = new RelayCommand(() => Step(1,  IsMatch),  () => HasMatches);
+        PreviousMatchCommand  = new RelayCommand(() => Step(-1, IsMatch),  () => HasMatches);
         GoToSelectedCommand   = new RelayCommand(GoToSelected, () => SelectedNode is not null);
     }
 
@@ -53,7 +56,27 @@ public sealed class TreeSectionViewModel : ObservableObject
 
     public RelayCommand NextMarkedCommand { get; }
     public RelayCommand PreviousMarkedCommand { get; }
+    public RelayCommand NextMatchCommand { get; }
+    public RelayCommand PreviousMatchCommand { get; }
     public RelayCommand GoToSelectedCommand { get; }
+
+    /// <summary>Rows in this section matching the search box; zero when the box is empty.</summary>
+    public int MatchCount
+    {
+        get => _matchCount;
+        set
+        {
+            if (!Set(ref _matchCount, value)) return;
+
+            OnPropertyChanged(nameof(HasMatches));
+            OnPropertyChanged(nameof(MatchTooltip));
+        }
+    }
+
+    /// <summary>Shows the search walk buttons, which mean nothing without a hit to walk.</summary>
+    public bool HasMatches => _matchCount > 0;
+
+    public string MatchTooltip => $"{_matchCount} search match(es) in this section";
 
     /// <summary>
     /// When set, the section shows only dotted rows together with their ancestors and descendants,
@@ -76,14 +99,20 @@ public sealed class TreeSectionViewModel : ObservableObject
         : "Show only dotted rows and their context";
 
     /// <summary>
-    /// Walks the dotted rows without changing the selection.
+    /// Walks the dotted rows, or the search matches, without changing the selection.
     /// <para>
     /// Deliberately scroll-only: selecting a row recomputes which rows are dotted, so stepping
     /// through the dots by selecting them would destroy the very set being walked. The selection
     /// stays on the row that produced the dots, and <see cref="GoToSelectedCommand"/> returns to it.
+    /// The search walk behaves the same way so that the two arrow pairs are one gesture, and so
+    /// that paging through hits does not drag every other pane's dots along with it.
+    /// </para>
+    /// <para>
+    /// Both walks share one position, so switching from the dots to the matches carries on from
+    /// the row last landed on instead of jumping back to the top.
     /// </para>
     /// </summary>
-    private void StepMarked(int direction)
+    private void Step(int direction, Func<TreeNodeViewModel, bool> wanted)
     {
         var rows = Nodes.SelectMany(n => n.DescendantsAndSelf()).ToList();
         if (rows.Count == 0) return;
@@ -98,13 +127,27 @@ public sealed class TreeSectionViewModel : ObservableObject
             var index = ((origin + direction * step) % rows.Count + rows.Count) % rows.Count;
             var candidate = rows[index];
 
-            if (candidate.Markers.Count == 0) continue;
+            // A row the dot filter hides cannot be scrolled to; landing on it would look like the
+            // button did nothing.
+            if (!wanted(candidate) || !IsShown(candidate)) continue;
 
             SetNavigationTarget(candidate);
             candidate.RevealAncestors();
             BringIntoView?.Invoke(candidate);
             return;
         }
+    }
+
+    private static bool IsMarked(TreeNodeViewModel node) => node.Markers.Count > 0;
+
+    private static bool IsMatch(TreeNodeViewModel node) => node.IsMatch;
+
+    private static bool IsShown(TreeNodeViewModel node)
+    {
+        for (var current = node; current is not null; current = current.Parent)
+            if (!current.IsVisible) return false;
+
+        return true;
     }
 
     private void SetNavigationTarget(TreeNodeViewModel? node)

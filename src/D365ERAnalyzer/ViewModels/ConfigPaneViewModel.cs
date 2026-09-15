@@ -104,6 +104,7 @@ public abstract class ConfigPaneViewModel : ObservableObject
             OnPropertyChanged(nameof(DetailName));
             OnPropertyChanged(nameof(DetailType));
             OnPropertyChanged(nameof(DetailPath));
+            OnPropertyChanged(nameof(DetailValue));
             OnPropertyChanged(nameof(DetailExpression));
             OnPropertyChanged(nameof(DetailCondition));
         }
@@ -112,6 +113,7 @@ public abstract class ConfigPaneViewModel : ObservableObject
     public string? DetailName       => _selectedNode?.Header;
     public string? DetailType       => _selectedNode?.Badge;
     public string? DetailPath       => _selectedNode?.Path;
+    public string? DetailValue      => _selectedNode?.Value;
     public string? DetailExpression => _selectedNode?.Expression;
     public string? DetailCondition  => _selectedNode?.Condition;
 
@@ -317,16 +319,23 @@ public abstract class ConfigPaneViewModel : ObservableObject
         var hits = 0;
 
         foreach (var section in Sections())
-        foreach (var root in section.Nodes)
         {
-            foreach (var node in root.DescendantsAndSelf())
+            var sectionHits = 0;
+
+            foreach (var root in section.Nodes)
             {
-                var match = hasTerm && Matches(node, term!, exactMatch);
-                node.IsMatch = match;
-                if (match) hits++;
+                foreach (var node in root.DescendantsAndSelf())
+                {
+                    var match = hasTerm && Matches(node, term!, exactMatch);
+                    node.IsMatch = match;
+                    if (match) sectionHits++;
+                }
+
+                if (hasTerm) SyncExpansionToMatches(root);
             }
 
-            if (hasTerm) SyncExpansionToMatches(root);
+            section.MatchCount = sectionHits;
+            hits += sectionHits;
         }
 
         return hits;
@@ -338,23 +347,82 @@ public abstract class ConfigPaneViewModel : ObservableObject
         if (SecondarySection is not null) yield return SecondarySection;
     }
 
+    /// <summary>
+    /// Whether a row matches the search.
+    /// <para>
+    /// Formulas are searched in full, never through <see cref="TreeNodeViewModel.Detail"/>: that is
+    /// a one-line preview cut at a fixed length, so a constant near the end of a long IF — the
+    /// "0225" fallback of an endpoint scheme — was simply not there to be found.
+    /// </para>
+    /// <para>
+    /// Formulas address paths with dots where the trees use slashes, and quote any name starting
+    /// with <c>$</c> or <c>#</c>: "EInvoiceProperties_ES/$CustomerEndpointType" is written
+    /// <c>EInvoiceProperties_ES.'$CustomerEndpointType'</c>. A path-shaped term is therefore also
+    /// tried dotted, against the formula with those quotes taken out. Only single quotes go —
+    /// they never delimit anything but a name, string constants use double quotes.
+    /// </para>
+    /// </summary>
     private static bool Matches(TreeNodeViewModel node, string term, bool exactMatch)
     {
+        var dotted = term.Replace('/', '.');
+        var pathLike = dotted.Contains('.');
+
+        bool InFormula(string? formula)
+        {
+            if (formula is null) return false;
+
+            return exactMatch
+                ? ContainsWord(formula, term) || (pathLike && ContainsWord(formula.Replace("'", ""), dotted))
+                : Contains(formula, term)     || (pathLike && Contains(formula.Replace("'", ""), dotted));
+        }
+
         if (!exactMatch)
             return Contains(node.Header, term)
                 || Contains(node.Detail, term)
                 || Contains(node.Badge, term)
-                || Contains(node.Path, term);
+                || Contains(node.Path, term)
+                || Contains(node.Value, term)
+                || InFormula(node.Expression)
+                || InFormula(node.Condition);
 
         // Exact mode compares whole identifiers, so "$CustTrans" no longer drags in
-        // "$CustTrans_OrderBy". Path segments count as identifiers too.
+        // "$CustTrans_OrderBy". Path segments count as identifiers too, and so does any token of a
+        // formula — a quoted constant included, since its quotes are not part of an identifier.
         return Equals(node.Header, term)
             || Equals(node.Path, term)
-            || SegmentEquals(node.Path, term);
+            || SegmentEquals(node.Path, term)
+            || Equals(node.Value, term)
+            || InFormula(node.Expression)
+            || InFormula(node.Condition);
     }
 
     private static bool Contains(string? text, string term) =>
         text is not null && text.Contains(term, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The term occurs with no identifier character touching either end. <c>$</c> and <c>#</c>
+    /// count as identifier characters, so "CustTrans" does not match inside "'$CustTrans'".
+    /// </summary>
+    private static bool ContainsWord(string? text, string term)
+    {
+        if (text is null || term.Length == 0) return false;
+
+        for (var at = text.IndexOf(term, StringComparison.OrdinalIgnoreCase);
+             at >= 0;
+             at = text.IndexOf(term, at + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            var end = at + term.Length;
+            var openBefore = at == 0 || !IsIdentifierChar(text[at - 1]);
+            var openAfter  = end == text.Length || !IsIdentifierChar(text[end]);
+
+            if (openBefore && openAfter) return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsIdentifierChar(char c) =>
+        char.IsLetterOrDigit(c) || c is '_' or '$' or '#';
 
     private static bool Equals(string? text, string term) =>
         text is not null && text.Equals(term, StringComparison.OrdinalIgnoreCase);

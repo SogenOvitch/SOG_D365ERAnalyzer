@@ -93,6 +93,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Name" Style="{StaticResource DetailLabel}"
@@ -113,16 +114,24 @@
                          Text="{Binding DetailPath, Mode=OneWay}"
                          Visibility="{Binding DetailPath, Converter={StaticResource EmptyToVis}}" />
 
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="Formula" Style="{StaticResource DetailLabel}"
-                           Visibility="{Binding DetailExpression, Converter={StaticResource EmptyToVis}}" />
+                <!-- The literal typed into the component, e.g. an XML attribute's fixed text. -->
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Value" Style="{StaticResource DetailLabel}"
+                           Visibility="{Binding DetailValue, Converter={StaticResource EmptyToVis}}" />
                 <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource DetailField}"
+                         FontFamily="Consolas"
+                         Text="{Binding DetailValue, Mode=OneWay}"
+                         Visibility="{Binding DetailValue, Converter={StaticResource EmptyToVis}}" />
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Formula" Style="{StaticResource DetailLabel}"
+                           Visibility="{Binding DetailExpression, Converter={StaticResource EmptyToVis}}" />
+                <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource DetailField}"
                          FontFamily="Consolas" AcceptsReturn="True"
                          Text="{Binding DetailExpression, Mode=OneWay}"
                          Visibility="{Binding DetailExpression, Converter={StaticResource EmptyToVis}}" />
 
-                <TextBlock Grid.Row="4" Grid.Column="0" Text="Enabled" Style="{StaticResource DetailLabel}"
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="Enabled" Style="{StaticResource DetailLabel}"
                            Visibility="{Binding DetailCondition, Converter={StaticResource EmptyToVis}}" />
-                <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource DetailField}"
+                <TextBox Grid.Row="5" Grid.Column="1" Style="{StaticResource DetailField}"
                          FontFamily="Consolas" AcceptsReturn="True"
                          Text="{Binding DetailCondition, Mode=OneWay}"
                          Visibility="{Binding DetailCondition, Converter={StaticResource EmptyToVis}}" />

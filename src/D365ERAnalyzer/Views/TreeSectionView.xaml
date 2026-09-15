@@ -62,6 +62,36 @@
             </Setter>
         </Style>
 
+        <!-- Search walk arrows: painted like a matching row so they read as "go to the next of
+             those", distinct from the grey arrows that walk the dots. Own template for the same
+             reason as the eye — the shared one would repaint them grey on hover. -->
+        <Style x:Key="MatchButton" TargetType="{x:Type Button}">
+            <Setter Property="Foreground" Value="{StaticResource FgBrush}" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="b" CornerRadius="3" BorderThickness="1"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                Background="{StaticResource MatchBrush}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background"
+                                        Value="{StaticResource MatchHoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="b" Property="Background"
+                                        Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Each ContextAction supplies its own caption and command. -->
         <Style x:Key="ContextActionItem" TargetType="{x:Type MenuItem}"
                BasedOn="{StaticResource {x:Type MenuItem}}">
@@ -179,6 +209,16 @@
                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,1" Padding="8,3">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <!-- Only while the search box has hits in this section. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,8,0"
+                                Visibility="{Binding HasMatches, Converter={StaticResource BoolToVis}}">
+                        <Button Content="▲" Command="{Binding PreviousMatchCommand}" Margin="0,0,2,0"
+                                Style="{StaticResource MatchButton}"
+                                ToolTip="{Binding MatchTooltip}" />
+                        <Button Content="▼" Command="{Binding NextMatchCommand}"
+                                Style="{StaticResource MatchButton}"
+                                ToolTip="{Binding MatchTooltip}" />
+                    </StackPanel>
                     <Button Content="▲" Command="{Binding PreviousMarkedCommand}" Margin="0,0,2,0"
                             ToolTip="Scroll to the previous dotted row (selection is left alone)" />
                     <Button Content="▼" Command="{Binding NextMarkedCommand}" Margin="0,0,2,0"

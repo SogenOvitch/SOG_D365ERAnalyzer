@@ -47,11 +47,15 @@ lines the others contributed.
 
 **Search across all three configurations at once**, with per-tree hit counts, a red border when
 nothing matches, and an *exact match* toggle so `$CustTrans` stops dragging in `$CustTrans_OrderBy`.
-The data model is searched through an index over the underlying graph, so hits are found in
-branches that were never expanded and the tree opens itself to reach them.
+It reads names, paths, literal values and the full text of every formula and enable condition, so a
+hard-coded constant such as `"0225"` is found wherever it is written. A path can be typed with
+slashes or dots. The data model is searched through an index over the underlying graph, so hits are
+found in branches that were never expanded and the tree opens itself to reach them. While a tree has
+hits, a pair of amber ▲ ▼ appears in its header to walk them.
 
-**Details panel** per pane showing the selected row's name, type, path, formula and enable
-condition — read-only but selectable, with the formula's real line breaks preserved.
+**Details panel** per pane showing the selected row's name, type, path, literal value, formula and
+enable condition — read-only but selectable, with the formula's real line breaks preserved. The
+value is what a format component emits when nothing is bound to it, such as an XML namespace.
 
 **Rows sorted** with `$` and `#` names first, then alphabetically, so the hand-written calculated
 fields sit together at the top of each level. The format component tree is the exception and keeps
@@ -158,6 +162,20 @@ ten colours to learn.
 because selecting recomputes which rows are dotted — stepping through the dots by selecting them
 would destroy the set being walked. The row the walk stopped on is outlined instead, since nothing
 else would show where it is.
+
+The amber ▲ ▼ that walk search hits behave the same way. Selecting would not disturb the hits, but
+it would re-dot every other tree on each step, and two arrow pairs that act differently would be
+worse than one rule. Both walks share a position, so switching between them carries on from the row
+last landed on. Rows hidden by 👁 are skipped.
+
+### Search reads formulas in full, not the row text
+
+A row's muted detail text is a one-line preview cut at a fixed length, so searching it found a
+constant only when it happened to sit near the start of its formula. Search reads the formula and
+enable condition themselves. Formulas spell paths with dots and quote `$`/`#` names
+(`EInvoiceProperties_ES.'$CustomerEndpointType'`), so a term shaped like a path is also tried dotted
+against the formula with single quotes removed — safe, because ER only uses single quotes around
+names; string constants take double quotes.
 
 ### The trees are not virtualised
 
